@@ -1,0 +1,4 @@
+result
+
+# Secrets file containing sensitive configuration
+secrets.nix
