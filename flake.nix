@@ -5,13 +5,17 @@
   };
   outputs = {nixpkgs, ...}: let
     hostname = "pihole";
+    # Use personal configuration if it exists, otherwise fall back to default
+    userConfig = if builtins.pathExists ./personal/alex_users.nix 
+      then ./personal/alex_users.nix 
+      else ./default-users.nix;
   in rec {
     nixosConfigurations.rpi4 = nixpkgs.lib.nixosSystem {
       system = "aarch64-linux";
       modules = [
         "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
         ./sdimage.nix
-        ./alex_users.nix
+        userConfig
         ./configuration.nix
       ];
     };
@@ -21,7 +25,7 @@
       system = "aarch64-linux";
       modules = [
         ./filesystems.nix
-        ./alex_users.nix
+        userConfig
         ./configuration.nix
       ];
     };

@@ -7,7 +7,7 @@ nix-pihole repository to make it more maintainable, secure, and reusable.
 
 ### 🟡 Modularization and Reusability
 
-- [ ] **Separate Personal Configuration from System Configuration**
+- [x] **Separate Personal Configuration from System Configuration**
 
   - Issue: `alex_users.nix` contains personal user account and SSH keys
   - Solution: Create a generic `users.nix` template and move personal config to
@@ -17,7 +17,7 @@ nix-pihole repository to make it more maintainable, secure, and reusable.
     - `personal/alex_users.nix` (personal configuration)
     - `personal/secrets.nix` (personal secrets - gitignored)
 
-- [ ] **Create a Configuration Template System**
+- [x] **Create a Configuration Template System**
 
   - Create `template/` directory with:
     - `template/users.nix.example`
@@ -25,7 +25,7 @@ nix-pihole repository to make it more maintainable, secure, and reusable.
     - `template/secrets.nix.example`
   - Add instructions for copying and customizing templates
 
-- [ ] **Split `configuration.nix` into Logical Modules**
+- [x] **Split `configuration.nix` into Logical Modules**
   - `modules/pihole.nix` - Pi-hole specific configuration
   - `modules/networking.nix` - Network and firewall settings
   - `modules/base-system.nix` - Basic system configuration

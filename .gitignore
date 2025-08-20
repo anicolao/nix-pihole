@@ -2,3 +2,6 @@ result
 
 # Secrets file containing sensitive configuration
 secrets.nix
+
+# Personal configuration directory (contains sensitive information)
+personal/

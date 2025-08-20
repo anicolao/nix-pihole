@@ -19,10 +19,22 @@ This repository contains a complete NixOS configuration that transforms a Raspbe
 
 ```
 ├── flake.nix           # Main Nix flake configuration with build targets
-├── configuration.nix   # Core system configuration (Pi-hole, networking, services)
-├── alex_users.nix      # User accounts and SSH key configuration
+├── configuration.nix   # Main system configuration (imports modules)
+├── default-users.nix   # Default user configuration fallback
 ├── filesystems.nix     # Filesystem mount configuration
 ├── sdimage.nix         # SD card image build settings
+├── modules/            # Modular configuration components
+│   ├── base-system.nix # Basic system settings (boot, locale, packages)
+│   ├── pihole.nix      # Pi-hole specific configuration
+│   ├── networking.nix  # Network and firewall settings  
+│   ├── hardware.nix    # Hardware-specific settings
+│   └── users.nix       # User management module
+├── templates/          # Configuration templates for customization
+│   ├── secrets.nix.example  # WiFi credentials and SSH keys template
+│   ├── users.nix.example    # User accounts template
+│   └── wifi.nix.example     # WiFi configuration template
+├── personal/           # Personal configurations (gitignored)
+│   └── README.md       # Instructions for personal configuration
 └── flake.lock          # Dependency lock file
 ```
 
@@ -34,23 +46,44 @@ This repository contains a complete NixOS configuration that transforms a Raspbe
 
 ## Quick Start
 
-### 1. Building an SD Card Image
+### 1. Configuration Setup
 
-To create a bootable SD card image for your Raspberry Pi 4:
+Before building the image, you need to set up your personal configuration:
 
 ```bash
 # Clone the repository
 git clone https://github.com/anicolao/nix-pihole.git
 cd nix-pihole
 
+# Copy templates to create your personal configuration
+cp templates/secrets.nix.example personal/secrets.nix
+cp templates/users.nix.example personal/alex_users.nix
+
+# Edit the secrets file with your actual values
+nano personal/secrets.nix  # Add your WiFi credentials and SSH keys
+
+# Optionally customize your user configuration
+nano personal/alex_users.nix  # Modify usernames and settings as needed
+```
+
+**Important**: Edit `personal/secrets.nix` to include:
+- Your WiFi network name and password
+- Your SSH public key for secure access
+- A hashed password for the root user
+
+### 2. Building an SD Card Image
+
+To create a bootable SD card image for your Raspberry Pi 4:
+
+```bash
 # Build the SD card image
-nix build .#images.rpi4
+nix build path:$PWD#images.rpi4
 
 # Flash the image to your SD card
 sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
 ```
 
-### 2. Initial Setup
+### 3. Initial Setup
 
 1. Insert the SD card into your Raspberry Pi 4
 2. Power on the device
@@ -58,7 +91,7 @@ sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
 4. Find the Pi's IP address on your network
 5. SSH into the device: `ssh root@<pi-ip-address>`
 
-### 3. Pi-hole Configuration
+### 4. Pi-hole Configuration
 
 After boot, Pi-hole will be available at:
 - **Web Interface**: `http://<pi-ip-address>:8080/admin`
@@ -87,37 +120,83 @@ The Pi-hole is configured with:
 
 ## Customization
 
-### Updating WiFi Credentials
+### Module-Based Configuration
 
-Edit `configuration.nix` and modify the wireless configuration:
+The configuration is now organized into modules that can be customized through options in `configuration.nix`:
 
 ```nix
-networking.wireless = {
-  enable = true;
-  networks."YOUR_NETWORK_NAME".psk = "YOUR_PASSWORD";
-  interfaces = ["wlan0"];
+pihole = {
+  # Pi-hole service options
+  service = {
+    enable = true;
+    interface = "end0";           # Network interface for Pi-hole
+    upstreamDNS = ["8.8.8.8"];   # DNS servers
+    webPort = "8080";             # Web interface port
+  };
+  
+  # Networking options
+  networking = {
+    enable = true;
+    hostName = "pihole";
+    wifi.enable = true;           # Set to false for ethernet-only
+    firewall.allowedTCPPorts = [22 80 443 8080];
+  };
+  
+  # Base system options
+  baseSystem = {
+    enable = true;
+    timeZone = "America/Toronto";
+    locale = "en_US.UTF-8";
+  };
 };
 ```
 
-### Adding Custom Blocklists
+### Personal Configuration
 
-Modify the `services.pihole-ftl.lists` section in `configuration.nix`:
+Personal settings like users and WiFi credentials are stored in the `personal/` directory:
+
+1. **WiFi and Secrets**: Edit `personal/secrets.nix`
+   ```nix
+   {
+     wifi = {
+       networkName = "YOUR_NETWORK";
+       password = "YOUR_PASSWORD";
+     };
+     # ... SSH keys and passwords
+   }
+   ```
+
+2. **User Accounts**: Edit `personal/alex_users.nix` or copy from `templates/users.nix.example`
+
+### Advanced Customization
+
+#### Adding Custom Blocklists
+
+Edit the Pi-hole lists in `modules/pihole.nix` or override in `configuration.nix`:
 
 ```nix
-lists = [
+services.pihole-ftl.lists = [
   {
-    url = "https://example.com/blocklist.txt";
-    description = "Custom blocklist";
+    url = "https://example.com/custom-blocklist.txt";
+    description = "My custom blocklist";
   }
 ];
 ```
 
-### Changing DNS Upstreams
+#### Ethernet-Only Setup
 
-Update the DNS upstream servers in `configuration.nix`:
+For wired-only deployments, disable WiFi:
 
 ```nix
-settings.dns.upstreams = ["1.1.1.1" "8.8.8.8"];
+pihole.networking.wifi.enable = false;
+```
+
+#### Different Hardware Platforms
+
+Change the network interface for different hardware:
+
+```nix
+pihole.service.interface = "eth0";  # For Raspberry Pi ethernet
 ```
 
 ## Building and Testing
@@ -132,7 +211,7 @@ nix flake check
 nix build .#nixosConfigurations.rpi4.config.system.build.toplevel
 
 # Build just the SD image
-nix build .#images.rpi4
+nix build path:$PWD#images.rpi4
 ```
 
 ### Updating Dependencies
@@ -142,7 +221,7 @@ nix build .#images.rpi4
 nix flake update
 
 # Rebuild with new dependencies
-nix build .#images.rpi4
+nix build path:$PWD#images.rpi4
 ```
 
 ## Troubleshooting
