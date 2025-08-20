@@ -1,3 +1,7 @@
+# users.nix.example
+# Template for personal user configuration
+# Copy this file to personal/users.nix and customize with your actual values
+
 {pkgs, ...}: let
   secrets = import ./secrets.nix;
 in {
@@ -5,10 +9,12 @@ in {
     initialHashedPassword = secrets.rootPassword;
     openssh.authorizedKeys.keys = secrets.sshKeys.users;
   };
-  users.extraUsers.anicolao = {
+
+  # Example additional user - customize as needed
+  users.extraUsers.myuser = {
     createHome = true;
-    home = "/home/anicolao";
-    description = "anicolao";
+    home = "/home/myuser";
+    description = "My User Account";
     group = "users";
     extraGroups = ["wheel" "dialout"];
     shell = pkgs.zsh;

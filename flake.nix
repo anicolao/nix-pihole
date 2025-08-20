@@ -11,7 +11,7 @@
       modules = [
         "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
         ./sdimage.nix
-        ./alex_users.nix
+        ./personal/alex_users.nix
         ./configuration.nix
       ];
     };
@@ -21,7 +21,7 @@
       system = "aarch64-linux";
       modules = [
         ./filesystems.nix
-        ./alex_users.nix
+        ./personal/alex_users.nix
         ./configuration.nix
       ];
     };
