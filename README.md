@@ -76,8 +76,11 @@ nano personal/alex_users.nix  # Modify usernames and settings as needed
 To create a bootable SD card image for your Raspberry Pi 4:
 
 ```bash
-# Build the SD card image
+# Build the SD card image (works on both x86_64 and aarch64 systems)
 nix build path:$PWD#images.rpi4
+
+# Alternative: Explicit cross-compilation from x86_64-linux
+nix build .#packages.x86_64-linux.rpi4-image
 
 # Flash the image to your SD card
 sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
@@ -210,7 +213,25 @@ nix flake check
 # Build the system configuration
 nix build .#nixosConfigurations.rpi4.config.system.build.toplevel
 
-# Build just the SD image
+# Build the SD image (automatically works on x86_64-linux via cross-compilation)
+nix build path:$PWD#images.rpi4
+
+# Alternative: Build using the cross-compilation package (x86_64-linux -> aarch64-linux)
+nix build .#packages.x86_64-linux.rpi4-image
+```
+
+### Cross-Platform Building
+
+This flake supports building ARM64 images on x86_64 systems through cross-compilation:
+
+```bash
+# On x86_64-linux systems, build ARM64 image
+nix build .#packages.x86_64-linux.rpi4-image
+
+# On aarch64-linux systems (native ARM64)
+nix build .#packages.aarch64-linux.rpi4-image
+
+# Universal approach that works on both architectures
 nix build path:$PWD#images.rpi4
 ```
 
@@ -232,6 +253,14 @@ nix build path:$PWD#images.rpi4
 2. **Pi-hole web interface not accessible**: Check firewall settings and port 8080
 3. **DNS not resolving**: Ensure Pi-hole service is running and ports 53 are open
 4. **SSH connection refused**: Verify SSH service is enabled and port 22 is open
+5. **Cross-compilation errors**: If you see "required to build" errors on x86_64 systems:
+   ```bash
+   # Use explicit cross-compilation package
+   nix build .#packages.x86_64-linux.rpi4-image
+   
+   # Or enable emulation (requires system setup)
+   # echo ':aarch64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xb7\x00:\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/usr/bin/qemu-aarch64-static:CF' | sudo tee /proc/sys/fs/binfmt_misc/register
+   ```
 
 ### Logs and Diagnostics
 
