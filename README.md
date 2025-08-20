@@ -77,7 +77,7 @@ To create a bootable SD card image for your Raspberry Pi 4:
 
 ```bash
 # Build the SD card image
-nix build .#images.rpi4
+nix build path:$PWD#images.rpi4
 
 # Flash the image to your SD card
 sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
@@ -211,7 +211,7 @@ nix flake check
 nix build .#nixosConfigurations.rpi4.config.system.build.toplevel
 
 # Build just the SD image
-nix build .#images.rpi4
+nix build path:$PWD#images.rpi4
 ```
 
 ### Updating Dependencies
@@ -221,7 +221,7 @@ nix build .#images.rpi4
 nix flake update
 
 # Rebuild with new dependencies
-nix build .#images.rpi4
+nix build path:$PWD#images.rpi4
 ```
 
 ## Troubleshooting
