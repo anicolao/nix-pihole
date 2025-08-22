@@ -179,9 +179,9 @@ QEMU_CMD=(
     -smp "$SMP_CORES"
     # Use the SD card image directly as the boot device
     -drive "if=sd,format=raw,file=$DISK_IMAGE"
-    # Network setup with SSH forwarding - use virtio-net for better compatibility
+    # Network setup with SSH forwarding - use USB network device for raspi4b compatibility
     -netdev "user,id=net0,hostfwd=tcp::$SSH_FORWARD_PORT-:22"
-    -device "virtio-net-pci,netdev=net0"
+    -device "usb-net,netdev=net0"
 )
 
 # Add VNC or nographic mode
