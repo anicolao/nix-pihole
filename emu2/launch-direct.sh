@@ -179,9 +179,9 @@ QEMU_CMD=(
     -smp "$SMP_CORES"
     # Use the SD card image directly as the boot device
     -drive "if=sd,format=raw,file=$DISK_IMAGE"
-    # Network setup with SSH forwarding
+    # Network setup with SSH forwarding - use virtio-net for better compatibility
     -netdev "user,id=net0,hostfwd=tcp::$SSH_FORWARD_PORT-:22"
-    -device "usb-net,netdev=net0"
+    -device "virtio-net-pci,netdev=net0"
 )
 
 # Add VNC or nographic mode
@@ -190,15 +190,19 @@ if [[ "$ENABLE_VNC" == "true" ]]; then
     # When using VNC, we need explicit serial console for debugging
     QEMU_CMD+=(-serial stdio)
 else
-    # nographic mode with serial console - disable monitor to allow stdio for serial
+    # nographic mode with ARM UART console
     QEMU_CMD+=(-nographic)
-    QEMU_CMD+=(-monitor none -serial stdio)
+    QEMU_CMD+=(-chardev stdio,id=char0 -serial chardev:char0)
 fi
 
 # Add verbose options if requested
 if [[ "$VERBOSE" == "true" ]]; then
     QEMU_CMD+=(-d guest_errors)
 fi
+
+# Add kernel command line for better console and boot support
+# These parameters help ensure console output and proper boot behavior
+QEMU_CMD+=(-append "console=ttyAMA0,115200 console=tty1 earlyprintk=ttyAMA0,115200")
 
 # Show command or execute
 if [[ "$DRY_RUN" == "true" ]]; then
