@@ -190,8 +190,9 @@ if [[ "$ENABLE_VNC" == "true" ]]; then
     # When using VNC, we need explicit serial console for debugging
     QEMU_CMD+=(-serial stdio)
 else
-    # nographic mode handles console output to stdio automatically
+    # nographic mode with explicit serial console connection
     QEMU_CMD+=(-nographic)
+    QEMU_CMD+=(-serial stdio)
 fi
 
 # Add verbose options if requested
