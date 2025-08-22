@@ -28,6 +28,10 @@ OPTIONS:
     --cores N       Set number of CPU cores (default: 4)
     --dry-run       Show the QEMU command without executing it
     --verbose       Enable verbose QEMU output
+    --console MODE  Serial console mode for nographic (mux|telnet|none) (default: mux)
+                    mux: multiplexed console (Ctrl-A c to switch monitor/serial)
+                    telnet: serial via telnet on port 4444
+                    none: disable monitor, serial only to stdio
 
 EXAMPLES:
     $0 nixos-sd-image-rpi4.img
@@ -93,6 +97,7 @@ DRY_RUN=false
 VERBOSE=false
 DISK_IMAGE=""
 ENABLE_VNC=false
+CONSOLE_MODE="mux"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -124,6 +129,15 @@ while [[ $# -gt 0 ]]; do
         --verbose)
             VERBOSE=true
             shift
+            ;;
+        --console)
+            CONSOLE_MODE="$2"
+            if [[ "$CONSOLE_MODE" != "mux" && "$CONSOLE_MODE" != "telnet" && "$CONSOLE_MODE" != "none" ]]; then
+                echo "❌ Invalid console mode: $CONSOLE_MODE"
+                echo "   Valid modes: mux, telnet, none"
+                exit 1
+            fi
+            shift 2
             ;;
         -*)
             echo "❌ Unknown option: $1"
@@ -190,8 +204,23 @@ if [[ "$ENABLE_VNC" == "true" ]]; then
     # When using VNC, we need explicit serial console for debugging
     QEMU_CMD+=(-serial stdio)
 else
-    # nographic mode with explicit serial console for Raspberry Pi 4
-    QEMU_CMD+=(-nographic -serial stdio)
+    # For nographic mode on Raspberry Pi 4, handle serial console based on mode
+    case "$CONSOLE_MODE" in
+        "mux")
+            # Multiplexed console: both QEMU monitor and serial console
+            # Press Ctrl-A c to switch between monitor and console
+            QEMU_CMD+=(-nographic -serial mon:stdio)
+            ;;
+        "telnet")
+            # Serial console via telnet to avoid stdio conflicts
+            # Connect with: telnet localhost 4444
+            QEMU_CMD+=(-nographic -serial telnet:localhost:4444,server,nowait)
+            ;;
+        "none")
+            # Disable monitor, use stdio for serial console only
+            QEMU_CMD+=(-nographic -monitor none -serial stdio)
+            ;;
+    esac
 fi
 
 # Add verbose options if requested
@@ -207,7 +236,24 @@ else
     echo "🎯 Launching QEMU with direct boot..."
     echo "   The system will boot from the image's bootloader"
     echo "   Watch for boot messages and login prompt"
-    echo "   Press Ctrl-A then X to exit"
+    if [[ "$ENABLE_VNC" == "true" ]]; then
+        echo "   Press Ctrl-A then X to exit"
+    else
+        case "$CONSOLE_MODE" in
+            "mux")
+                echo "   Press Ctrl-A c to switch between QEMU monitor and serial console"
+                echo "   Press Ctrl-A x to exit"
+                ;;
+            "telnet")
+                echo "   Connect to serial console with: telnet localhost 4444"
+                echo "   Press Ctrl-A x to exit QEMU"
+                ;;
+            "none")
+                echo "   Serial console output should appear directly"
+                echo "   Press Ctrl-A x to exit"
+                ;;
+        esac
+    fi
     echo ""
     
     # Execute QEMU
