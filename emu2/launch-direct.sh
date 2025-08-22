@@ -32,6 +32,7 @@ OPTIONS:
                     mux: multiplexed console (Ctrl-A c to switch monitor/serial)
                     telnet: serial via telnet on port 4444
                     none: disable monitor, serial only to stdio
+                    NOTE: Console is configured for ttyS0 (mini UART) compatibility
 
 EXAMPLES:
     $0 nixos-sd-image-rpi4.img
@@ -205,20 +206,23 @@ if [[ "$ENABLE_VNC" == "true" ]]; then
     QEMU_CMD+=(-serial stdio)
 else
     # For nographic mode on Raspberry Pi 4, handle serial console based on mode
+    # Configure for ttyS0 (mini UART) which many NixOS images use
     case "$CONSOLE_MODE" in
         "mux")
             # Multiplexed console: both QEMU monitor and serial console
             # Press Ctrl-A c to switch between monitor and console
-            QEMU_CMD+=(-nographic -serial mon:stdio)
+            # Use null for PL011 (ttyAMA0) and map stdio to mini UART (ttyS0)
+            QEMU_CMD+=(-nographic -serial null -serial mon:stdio)
             ;;
         "telnet")
             # Serial console via telnet to avoid stdio conflicts
             # Connect with: telnet localhost 4444
-            QEMU_CMD+=(-nographic -serial telnet:localhost:4444,server,nowait)
+            QEMU_CMD+=(-nographic -serial null -serial telnet:localhost:4444,server,nowait)
             ;;
         "none")
             # Disable monitor, use stdio for serial console only
-            QEMU_CMD+=(-nographic -monitor none -serial stdio)
+            # Map stdio to mini UART (ttyS0)
+            QEMU_CMD+=(-nographic -monitor none -serial null -serial stdio)
             ;;
     esac
 fi
@@ -241,15 +245,15 @@ else
     else
         case "$CONSOLE_MODE" in
             "mux")
-                echo "   Press Ctrl-A c to switch between QEMU monitor and serial console"
+                echo "   Press Ctrl-A c to switch between QEMU monitor and serial console (ttyS0)"
                 echo "   Press Ctrl-A x to exit"
                 ;;
             "telnet")
-                echo "   Connect to serial console with: telnet localhost 4444"
+                echo "   Connect to serial console (ttyS0) with: telnet localhost 4444"
                 echo "   Press Ctrl-A x to exit QEMU"
                 ;;
             "none")
-                echo "   Serial console output should appear directly"
+                echo "   Serial console (ttyS0) output should appear directly"
                 echo "   Press Ctrl-A x to exit"
                 ;;
         esac
