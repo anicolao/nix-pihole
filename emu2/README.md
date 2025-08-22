@@ -108,6 +108,12 @@ Unlike the original `emu/` that extracts kernel and device tree files:
 - Try `--memory 1G` if running on limited hardware
 - Ensure the image is a valid NixOS SD card image
 
+### Console Output Issues
+- **Console output should appear immediately** after the "Launching QEMU" message
+- If you see **no boot messages** but QEMU appears to be running, this indicates a serial console configuration issue
+- The framework automatically configures `-serial stdio` to ensure console output is visible
+- In VNC mode, console output appears in the terminal while graphics appear in the VNC viewer
+
 ### Network/SSH Issues
 - Wait for complete boot process (may take 1-2 minutes)
 - Check SSH service is enabled in the NixOS configuration
