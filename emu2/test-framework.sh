@@ -94,37 +94,52 @@ echo ""
 # Test 4: Parameter validation and parsing
 echo "🧪 Test 4: Parameter parsing validation"
 
+# Create test image for parameter tests
+echo "   Creating test image for parameter validation..."
+PARAM_TEST_IMG="/tmp/param-test.img"
+dd if=/dev/zero of="$PARAM_TEST_IMG" bs=1M count=1 2>/dev/null
+
 # Test custom port parsing
-if ./launch-direct.sh --port 2222 --dry-run /dev/null 2>&1 | grep -q ":2222-:22"; then
+if ./launch-direct.sh --port 2222 --dry-run "$PARAM_TEST_IMG" 2>&1 | grep -q ":2222-:22"; then
     echo "   ✅ Custom SSH port parsing works"
 else
     echo "   ❌ Custom SSH port parsing failed"
+    rm -f "$PARAM_TEST_IMG"
     exit 1
 fi
 
 # Test VNC option parsing
-if ./launch-direct.sh --vnc 5901 --dry-run /dev/null 2>&1 | grep -q "\-vnc"; then
+if ./launch-direct.sh --vnc 5901 --dry-run "$PARAM_TEST_IMG" 2>&1 | grep -q "\-vnc"; then
     echo "   ✅ VNC option parsing works"
 else
     echo "   ❌ VNC option parsing failed"
+    rm -f "$PARAM_TEST_IMG"
     exit 1
 fi
 
 # Test memory option parsing
-if ./launch-direct.sh --memory 1G --dry-run /dev/null 2>&1 | grep -q "\-m 1G"; then
+if ./launch-direct.sh --memory 1G --dry-run "$PARAM_TEST_IMG" 2>&1 | grep -q "\-m 1G"; then
     echo "   ✅ Memory option parsing works"
 else
     echo "   ❌ Memory option parsing failed"
+    rm -f "$PARAM_TEST_IMG"
     exit 1
 fi
+
+rm -f "$PARAM_TEST_IMG"
 
 echo ""
 
 # Test 5: QEMU command generation
 echo "🧪 Test 5: QEMU command generation validation"
 
+# Create test image for QEMU command validation
+echo "   Creating test image for command validation..."
+CMD_TEST_IMG="/tmp/cmd-test.img"
+dd if=/dev/zero of="$CMD_TEST_IMG" bs=1M count=1 2>/dev/null
+
 # Check that essential QEMU options are present in dry-run
-QEMU_OUTPUT=$(./launch-direct.sh --dry-run /dev/null 2>&1)
+QEMU_OUTPUT=$(./launch-direct.sh --dry-run "$CMD_TEST_IMG" 2>&1)
 
 if echo "$QEMU_OUTPUT" | grep -q "qemu-system-aarch64"; then
     echo "   ✅ Uses correct QEMU binary"
@@ -151,8 +166,11 @@ if echo "$QEMU_OUTPUT" | grep -q "hostfwd=tcp"; then
     echo "   ✅ SSH port forwarding specified"
 else
     echo "   ❌ SSH port forwarding not specified"
+    rm -f "$CMD_TEST_IMG"
     exit 1
 fi
+
+rm -f "$CMD_TEST_IMG"
 
 echo ""
 

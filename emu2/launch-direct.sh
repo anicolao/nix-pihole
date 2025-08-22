@@ -182,14 +182,15 @@ QEMU_CMD=(
     # Network setup with SSH forwarding
     -netdev "user,id=net0,hostfwd=tcp::$SSH_FORWARD_PORT-:22"
     -device "usb-net,netdev=net0"
-    # Serial console for debugging and interaction
-    -serial stdio
 )
 
-# Add VNC if requested
+# Add VNC or nographic mode
 if [[ "$ENABLE_VNC" == "true" ]]; then
     QEMU_CMD+=(-vnc ":$(($VNC_PORT - 5900))")
+    # When using VNC, we need explicit serial console for debugging
+    QEMU_CMD+=(-serial stdio)
 else
+    # nographic mode handles console output to stdio automatically
     QEMU_CMD+=(-nographic)
 fi
 
