@@ -1,0 +1,16 @@
+# Temporary files created during emulation
+*.img
+*.dtb
+kernel*.img
+
+# Temporary directories
+.tmp/
+temp/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Nix build results
+result
+result-*
