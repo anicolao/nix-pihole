@@ -115,7 +115,7 @@ Unlike the original `emu/` that extracts kernel and device tree files:
 - In VNC mode, console output appears in the terminal while graphics appear in the VNC viewer
 
 ### Network Issues  
-- **Slirp network errors**: Fixed by using `virtio-net-pci` instead of `usb-net` for better compatibility with Raspberry Pi 4 emulation
+- **Slirp network errors**: Fixed by using `rtl8139` network device which provides better compatibility with Raspberry Pi 4 emulation without requiring PCI bus support
 - **SSH connection issues**: Wait for complete boot process (may take 1-2 minutes)
 - Check SSH service is enabled in the NixOS configuration
 - Verify the SSH forward port isn't already in use

@@ -179,9 +179,9 @@ QEMU_CMD=(
     -smp "$SMP_CORES"
     # Use the SD card image directly as the boot device
     -drive "if=sd,format=raw,file=$DISK_IMAGE"
-    # Network setup with SSH forwarding - use USB network device for raspi4b compatibility
+    # Network setup with SSH forwarding - use rtl8139 for better raspi4b compatibility
     -netdev "user,id=net0,hostfwd=tcp::$SSH_FORWARD_PORT-:22"
-    -device "usb-net,netdev=net0"
+    -device "rtl8139,netdev=net0"
 )
 
 # Add VNC or nographic mode
@@ -190,9 +190,8 @@ if [[ "$ENABLE_VNC" == "true" ]]; then
     # When using VNC, we need explicit serial console for debugging
     QEMU_CMD+=(-serial stdio)
 else
-    # nographic mode with serial console - disable monitor to allow stdio for serial
+    # nographic mode handles console output to stdio automatically
     QEMU_CMD+=(-nographic)
-    QEMU_CMD+=(-monitor none -serial stdio)
 fi
 
 # Add verbose options if requested
