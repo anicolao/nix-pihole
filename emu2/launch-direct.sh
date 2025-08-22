@@ -149,8 +149,8 @@ if [[ -z "$DISK_IMAGE" ]]; then
     exit 1
 fi
 
-# Check if QEMU is available
-if ! command -v qemu-system-aarch64 &> /dev/null; then
+# Check if QEMU is available (skip for dry run)
+if [[ "$DRY_RUN" != "true" ]] && ! command -v qemu-system-aarch64 &> /dev/null; then
     echo "❌ qemu-system-aarch64 not found"
     echo "   Please run: nix develop"
     exit 1
@@ -179,9 +179,9 @@ QEMU_CMD=(
     -smp "$SMP_CORES"
     # Use the SD card image directly as the boot device
     -drive "if=sd,format=raw,file=$DISK_IMAGE"
-    # Network setup with SSH forwarding - use rtl8139 for better raspi4b compatibility
+    # Network setup with SSH forwarding
     -netdev "user,id=net0,hostfwd=tcp::$SSH_FORWARD_PORT-:22"
-    -device "rtl8139,netdev=net0"
+    -device "usb-net,netdev=net0"
 )
 
 # Add VNC or nographic mode
