@@ -1,5 +1,10 @@
 result
 
+# Emulation temporary files
+emu2/test-*.img
+emu2/*.log
+emu2/.direnv/
+
 # Secrets file containing sensitive configuration
 secrets.nix
 
