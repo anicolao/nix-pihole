@@ -190,8 +190,8 @@ if [[ "$ENABLE_VNC" == "true" ]]; then
     # When using VNC, we need explicit serial console for debugging
     QEMU_CMD+=(-serial stdio)
 else
-    # nographic mode handles console output to stdio automatically
-    QEMU_CMD+=(-nographic)
+    # nographic mode with explicit serial console for Raspberry Pi 4
+    QEMU_CMD+=(-nographic -serial stdio)
 fi
 
 # Add verbose options if requested
