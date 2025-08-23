@@ -28,20 +28,23 @@ OPTIONS:
     --cores N       Set number of CPU cores (default: 4)
     --dry-run       Show the QEMU command without executing it
     --verbose       Enable verbose QEMU output
-    --machine TYPE  QEMU machine type (raspi4b|virt) (default: raspi4b)
+    --machine TYPE  QEMU machine type (raspi4b|virt|test) (default: raspi4b)
                     raspi4b: Raspberry Pi 4 hardware emulation (most accurate)
                     virt: Generic ARM virtualization platform (better console support)
-    --console MODE  Serial console mode for nographic (mux|telnet|none|debug) (default: mux)
+                    test: Minimal test configuration for console debugging
+    --console MODE  Serial console mode for nographic (mux|telnet|none|debug|inspect) (default: mux)
                     mux: multiplexed console (Ctrl-A c to switch monitor/serial)
                     telnet: serial via telnet on port 4444  
                     none: disable monitor, serial only to stdio
                     debug: log all serial devices to files for troubleshooting
+                    inspect: comprehensive analysis mode - logs everything + shows system state
                     NOTE: Console mapping depends on machine type and image configuration
 
 EXAMPLES:
     $0 nixos-sd-image-rpi4.img
     $0 --machine virt --console none nixos-sd-image-rpi4.img
     $0 --console debug nixos-sd-image-rpi4.img
+    $0 --machine test --console inspect nixos-sd-image-rpi4.img
     $0 --port 2222 nixos-sd-image-rpi4.img
     $0 --vnc 5901 --memory 1G nixos-sd-image-rpi4.img
     $0 --dry-run nixos-sd-image-rpi4.img
@@ -49,12 +52,16 @@ EXAMPLES:
 MACHINE TYPE NOTES:
     raspi4b: Accurate Pi4 hardware emulation, but serial console can be tricky
     virt: Generic ARM platform with better QEMU serial support, good for debugging
+    test: Uses virt machine with minimal config for console troubleshooting
 
 CONSOLE TROUBLESHOOTING:
-    If you see no console output with raspi4b machine:
-    1. Try: --machine virt --console none
-    2. Try: --console debug (logs all serial devices to files)
-    3. Check if your image has serial console enabled in kernel/systemd
+    If you see no console output with any machine or console mode:
+    1. Try: --machine test --console inspect (minimal test config with analysis)
+    2. Try: --machine virt --console inspect
+    3. Check if your NixOS image has these kernel parameters: console=ttyAMA0,115200 console=ttyS0,115200
+    4. Verify the image boots by checking CPU/memory usage in another terminal
+    5. The image may not have serial console enabled - check systemd getty configuration
+    6. Run ./troubleshoot-console.sh (created in inspect mode) to analyze log files
 
 This script boots the image just like real hardware would:
 1. QEMU emulates the specified hardware platform  
@@ -141,14 +148,16 @@ while [[ $# -gt 0 ]]; do
             ;;
         --machine)
             MACHINE_TYPE="$2"
-            if [[ "$MACHINE_TYPE" != "raspi4b" && "$MACHINE_TYPE" != "virt" ]]; then
+            if [[ "$MACHINE_TYPE" != "raspi4b" && "$MACHINE_TYPE" != "virt" && "$MACHINE_TYPE" != "test" ]]; then
                 echo "❌ Invalid machine type: $MACHINE_TYPE"
-                echo "   Valid types: raspi4b, virt"
+                echo "   Valid types: raspi4b, virt, test"
                 exit 1
             fi
-            # Adjust CPU type for virt machine
+            # Adjust CPU type for different machines
             if [[ "$MACHINE_TYPE" == "virt" ]]; then
                 CPU_TYPE="cortex-a57"  # Better supported on virt machine
+            elif [[ "$MACHINE_TYPE" == "test" ]]; then
+                CPU_TYPE="cortex-a57"  # Use reliable CPU for testing
             fi
             shift 2
             ;;
@@ -162,9 +171,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --console)
             CONSOLE_MODE="$2"
-            if [[ "$CONSOLE_MODE" != "mux" && "$CONSOLE_MODE" != "telnet" && "$CONSOLE_MODE" != "none" && "$CONSOLE_MODE" != "debug" ]]; then
+            if [[ "$CONSOLE_MODE" != "mux" && "$CONSOLE_MODE" != "telnet" && "$CONSOLE_MODE" != "none" && "$CONSOLE_MODE" != "debug" && "$CONSOLE_MODE" != "inspect" ]]; then
                 echo "❌ Invalid console mode: $CONSOLE_MODE"
-                echo "   Valid modes: mux, telnet, none, debug"
+                echo "   Valid modes: mux, telnet, none, debug, inspect"
                 exit 1
             fi
             shift 2
@@ -227,6 +236,12 @@ QEMU_CMD=(
 if [[ "$MACHINE_TYPE" == "virt" ]]; then
     # For virt machine, use virtio block device
     QEMU_CMD+=(-drive "if=virtio,format=raw,file=$DISK_IMAGE")
+elif [[ "$MACHINE_TYPE" == "test" ]]; then
+    # For test machine, use virt with minimal config
+    MACHINE_TYPE="virt"  # Override to use virt for testing
+    QEMU_CMD[1]="-machine"  # Update the machine parameter
+    QEMU_CMD[2]="virt"      # Set to virt
+    QEMU_CMD+=(-drive "if=virtio,format=raw,file=$DISK_IMAGE")
 else
     # For raspi4b, use SD card interface
     QEMU_CMD+=(-drive "if=sd,format=raw,file=$DISK_IMAGE")
@@ -238,7 +253,7 @@ QEMU_CMD+=(
 )
 
 # Configure network device based on machine type
-if [[ "$MACHINE_TYPE" == "virt" ]]; then
+if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
     # Use virtio-net for virt machine (more reliable)
     QEMU_CMD+=(-device "virtio-net,netdev=net0")
 else
@@ -253,7 +268,7 @@ if [[ "$ENABLE_VNC" == "true" ]]; then
     QEMU_CMD+=(-serial stdio)
 else
     # Configure serial console based on machine type and mode
-    if [[ "$MACHINE_TYPE" == "virt" ]]; then
+    if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
         # virt machine has simpler, more reliable serial console support
         case "$CONSOLE_MODE" in
             "mux")
@@ -274,6 +289,16 @@ else
                 for i in {1..5}; do
                     QEMU_CMD+=(-serial "file:serial-${i}.log")
                 done
+                ;;
+            "inspect")
+                # Comprehensive analysis mode - logs everything and provides system monitoring
+                QEMU_CMD+=(-nographic -monitor stdio)
+                # Log all serial devices
+                for i in {1..5}; do
+                    QEMU_CMD+=(-serial "file:serial-${i}.log")
+                done
+                # Add debugging options to see what's happening
+                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset -D qemu-debug.log)
                 ;;
         esac
     else
@@ -298,6 +323,18 @@ else
                     QEMU_CMD+=(-serial "file:raspi-serial-${i}.log")
                 done
                 ;;
+            "inspect")
+                # Comprehensive analysis mode for Pi4
+                QEMU_CMD+=(-nographic -monitor stdio)
+                # Log all serial devices with different routing attempts
+                QEMU_CMD+=(-serial "file:raspi-serial-1.log")  # PL011 UART (ttyAMA0)
+                QEMU_CMD+=(-serial "file:raspi-serial-2.log")  # Mini UART (ttyS0)
+                QEMU_CMD+=(-serial "file:raspi-serial-3.log")  # Additional UARTs
+                QEMU_CMD+=(-serial "file:raspi-serial-4.log")
+                QEMU_CMD+=(-serial "file:raspi-serial-5.log")
+                # Enable comprehensive debugging
+                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset,int -D qemu-raspi-debug.log)
+                ;;
         esac
     fi
 fi
@@ -320,7 +357,7 @@ else
     else
         case "$CONSOLE_MODE" in
             "mux")
-                if [[ "$MACHINE_TYPE" == "virt" ]]; then
+                if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
                     echo "   Press Ctrl-A c to switch between QEMU monitor and serial console"
                 else
                     echo "   Press Ctrl-A c to switch between QEMU monitor and serial console (ttyS0)"
@@ -328,7 +365,7 @@ else
                 echo "   Press Ctrl-A x to exit"
                 ;;
             "telnet")
-                if [[ "$MACHINE_TYPE" == "virt" ]]; then
+                if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
                     echo "   Connect to serial console with: telnet localhost 4444"
                 else
                     echo "   Connect to serial console (ttyS0) with: telnet localhost 4444"
@@ -336,7 +373,7 @@ else
                 echo "   Press Ctrl-A x to exit QEMU"
                 ;;
             "none")
-                if [[ "$MACHINE_TYPE" == "virt" ]]; then
+                if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
                     echo "   Serial console output should appear directly"
                 else
                     echo "   Serial console (ttyS0) output should appear directly"
@@ -344,7 +381,7 @@ else
                 echo "   Press Ctrl-A x to exit"
                 ;;
             "debug")
-                if [[ "$MACHINE_TYPE" == "virt" ]]; then
+                if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
                     echo "   Serial devices are logged to: serial-1.log through serial-5.log"
                 else
                     echo "   Serial devices are logged to: raspi-serial-1.log through raspi-serial-5.log"
@@ -352,9 +389,124 @@ else
                 echo "   Monitor with: tail -f *.log"
                 echo "   Press Ctrl-A x to exit"
                 ;;
+            "inspect")
+                if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
+                    echo "   Comprehensive analysis mode active:"
+                    echo "   - Serial devices logged to: serial-1.log through serial-5.log"
+                    echo "   - QEMU debug log: qemu-debug.log"
+                    echo "   - QEMU monitor available for system inspection"
+                    echo "   Monitor serial with: tail -f serial-*.log"
+                else
+                    echo "   Comprehensive analysis mode active:"
+                    echo "   - raspi-serial-1.log: PL011 UART (ttyAMA0)"
+                    echo "   - raspi-serial-2.log: Mini UART (ttyS0)"  
+                    echo "   - raspi-serial-3,4,5.log: Additional UARTs"
+                    echo "   - QEMU debug log: qemu-raspi-debug.log"
+                    echo "   - QEMU monitor available for system inspection"
+                    echo "   Monitor serial with: tail -f raspi-serial-*.log"
+                fi
+                echo "   Use QEMU monitor commands: info registers, info qtree, info chardev"
+                echo "   Press Ctrl-A x to exit"
+                ;;
         esac
     fi
     echo ""
+    
+    # Create troubleshooting helper script for inspect mode
+    if [[ "$CONSOLE_MODE" == "inspect" ]]; then
+        cat > troubleshoot-console.sh << 'EOF'
+#!/bin/bash
+echo "=== Serial Console Troubleshooting Helper ==="
+echo "This script monitors all log files and provides analysis."
+echo ""
+
+# Function to check if any logs have content
+check_logs() {
+    local found_output=false
+    echo "📋 Checking log files for output..."
+    
+    for log in *serial*.log qemu*.log; do
+        if [[ -f "$log" ]]; then
+            local size=$(stat -f%z "$log" 2>/dev/null || stat -c%s "$log" 2>/dev/null || echo "0")
+            if [[ "$size" -gt 0 ]]; then
+                echo "✅ $log: $size bytes"
+                found_output=true
+            else
+                echo "📝 $log: empty"
+            fi
+        fi
+    done
+    
+    if [[ "$found_output" == "false" ]]; then
+        echo ""
+        echo "❌ No serial output found in any log file."
+        echo "This suggests one of these issues:"
+        echo "   1. NixOS image lacks serial console configuration"
+        echo "   2. Bootloader (U-Boot) not configured for serial output"
+        echo "   3. Kernel parameters missing console= directives"
+        echo "   4. systemd getty not enabled for serial console"
+        echo ""
+        echo "🔍 Next steps to try:"
+        echo "   1. Check if the image is actually booting (monitor CPU usage)"
+        echo "   2. Try mounting the image to check /boot/config.txt and kernel parameters"
+        echo "   3. Use a different NixOS image known to have serial console working"
+        echo "   4. Check if SSH is accessible (may indicate system is running without serial)"
+        return 1
+    else
+        echo ""
+        echo "✅ Found output! Check the non-empty log files above."
+        return 0
+    fi
+}
+
+# Function to monitor logs in real-time
+monitor_logs() {
+    echo ""
+    echo "📺 Starting real-time log monitoring..."
+    echo "   Press Ctrl-C to stop monitoring"
+    echo ""
+    
+    # Find all log files and tail them
+    local log_files=()
+    for log in *serial*.log qemu*.log; do
+        [[ -f "$log" ]] && log_files+=("$log")
+    done
+    
+    if [[ ${#log_files[@]} -gt 0 ]]; then
+        tail -f "${log_files[@]}"
+    else
+        echo "❌ No log files found to monitor"
+    fi
+}
+
+# Main menu
+echo "Choose an option:"
+echo "1) Check current log files for output"
+echo "2) Monitor log files in real-time"
+echo "3) Show both options"
+echo ""
+read -p "Enter choice (1-3): " choice
+
+case "$choice" in
+    1)
+        check_logs
+        ;;
+    2)
+        monitor_logs
+        ;;
+    3)
+        check_logs
+        echo ""
+        monitor_logs
+        ;;
+    *)
+        echo "Invalid choice"
+        ;;
+esac
+EOF
+        chmod +x troubleshoot-console.sh
+        echo "📋 Created troubleshoot-console.sh script for analysis"
+    fi
     
     # Execute QEMU
     exec "${QEMU_CMD[@]}"
