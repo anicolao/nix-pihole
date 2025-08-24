@@ -24,10 +24,8 @@
       ];
     };
 
-    # Make the image available on all systems via cross-compilation
-    images = forAllSystems (system: {
-      rpi4 = nixosConfigurations.rpi4.config.system.build.sdImage;
-    });
+    # Make the image available directly (cross-compilation handled automatically)
+    images.rpi4 = nixosConfigurations.rpi4.config.system.build.sdImage;
 
     packages = forAllSystems (system: {
       # Provide the image as a package for easy building

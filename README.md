@@ -81,6 +81,9 @@ To create a bootable SD card image for your Raspberry Pi 4. Thanks to cross-comp
 # Build the SD card image (works on any supported platform)
 nix build path:$PWD#images.rpi4
 
+# Alternative: Build via packages interface
+nix build path:$PWD#packages.$(nix eval --raw --impure --expr 'builtins.currentSystem').rpi4-image
+
 # Flash the image to your SD card
 sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
 ```
