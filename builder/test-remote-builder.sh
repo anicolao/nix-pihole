@@ -120,7 +120,7 @@ test_container_ssh_connection() {
 test_nix_in_container() {
     log_info "Testing Nix installation in container..."
     
-    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@localhost -p 2222 'nix --version' &> /dev/null; then
+    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@localhost -p 2222 'source /root/.nix-profile/etc/profile.d/nix.sh && nix --version' &> /dev/null; then
         log_success "Nix is installed and working in container"
         return 0
     else

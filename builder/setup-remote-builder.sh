@@ -178,10 +178,10 @@ setup_nix_container() {
     # Install Nix in the container
     log_info "Installing Nix in the container..."
     docker exec "$CONTAINER_NAME" sh -c '
-        # Install Nix
-        curl -L https://nixos.org/nix/install | sh
+        # Install Nix in single-user mode to avoid nixbld group requirements
+        curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
         
-        # Source Nix environment
+        # Source Nix environment for single-user installation
         . /root/.nix-profile/etc/profile.d/nix.sh
         
         # Configure Nix for remote building
@@ -288,6 +288,8 @@ configure_nix_remote_builder() {
                 ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'source /root/.nix-profile/etc/profile.d/nix.sh && nix --version'
             else
                 log_error "Nix installation might have failed"
+                log_info "Checking if Nix installer completed successfully..."
+                ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'ls -la /nix/ /root/'
             fi
         else
             log_error "Basic SSH connection failed"
