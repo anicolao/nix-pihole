@@ -140,142 +140,60 @@ start_colima() {
 }
 
 setup_nix_container() {
-    log_info "Setting up NixOS container..."
+    log_info "Setting up Nix container..."
     
     # Check if container already exists and is running
     if docker ps | grep -q "$CONTAINER_NAME"; then
-        log_info "NixOS container is already running"
+        log_info "Nix container is already running"
         return 0
     fi
     
     # Check if container exists but is stopped
     if docker ps -a | grep -q "$CONTAINER_NAME"; then
-        log_info "Starting existing NixOS container..."
+        log_info "Starting existing Nix container..."
         docker start "$CONTAINER_NAME"
+        sleep 3
         return 0
     fi
     
-    # Use a proper NixOS container image that has nixos-rebuild available
-    log_info "Creating new NixOS container..."
+    log_info "Creating new Nix container..."
     
-    # Start the container with systemd for proper service management
+    # Use Ubuntu base image with simple setup - much more reliable than systemd containers
     docker run -d \
         --name "$CONTAINER_NAME" \
         --platform linux/aarch64 \
-        --privileged \
         -p 2222:22 \
-        -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-        --tmpfs /tmp \
-        --tmpfs /run \
-        --tmpfs /run/lock \
-        nixos/nix:latest \
-        /sbin/init
+        ubuntu:22.04 \
+        /bin/bash -c "apt-get update && apt-get install -y openssh-server curl xz-utils sudo && \
+                      mkdir -p /var/run/sshd && \
+                      echo 'root:password' | chpasswd && \
+                      sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+                      sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+                      /usr/sbin/sshd -D"
     
-    # Give the container a moment to start up
-    sleep 3
+    # Give the container time to start up and install packages
+    log_info "Waiting for container initialization..."
+    sleep 10
     
-    log_info "Setting up NixOS configuration for SSH..."
-    
-    # Create NixOS configuration file for SSH service
+    # Install Nix in the container
+    log_info "Installing Nix in the container..."
     docker exec "$CONTAINER_NAME" sh -c '
-        # Create the NixOS configuration directory
-        mkdir -p /etc/nixos
+        # Install Nix
+        curl -L https://nixos.org/nix/install | sh
         
-        # Create configuration.nix with SSH service enabled
-        cat > /etc/nixos/configuration.nix << EOF
-{ config, pkgs, ... }:
-
-{
-  # Import the basic configuration
-  imports = [ ];
-
-  # Enable SSH service with proper configuration
-  services.openssh = {
-    enable = true;
-    settings = {
-      PermitRootLogin = "yes";
-      PasswordAuthentication = false;
-      PubkeyAuthentication = true;
-      # Disable privilege separation for container environment
-      UsePrivilegeSeparation = false;
-    };
-    ports = [ 22 ];
-    listenAddresses = [
-      { addr = "0.0.0.0"; port = 22; }
-    ];
-  };
-
-  # Configure Nix for remote building
-  nix = {
-    settings = {
-      experimental-features = [ "nix-command" "flakes" ];
-      trusted-users = [ "root" ];
-      sandbox = false;
-    };
-  };
-
-  # Enable networking
-  networking.firewall.allowedTCPPorts = [ 22 ];
-
-  # Essential packages
-  environment.systemPackages = with pkgs; [
-    openssh
-    git
-    vim
-    curl
-    nettools
-  ];
-
-  # System configuration
-  system.stateVersion = "23.11";
-}
+        # Source Nix environment
+        . /root/.nix-profile/etc/profile.d/nix.sh
+        
+        # Configure Nix for remote building
+        mkdir -p /root/.config/nix
+        cat > /root/.config/nix/nix.conf << EOF
+experimental-features = nix-command flakes
+trusted-users = root
+sandbox = false
 EOF
         
-        echo "Created NixOS configuration.nix"
-        cat /etc/nixos/configuration.nix
-    '
-    
-    # Apply the NixOS configuration
-    log_info "Applying NixOS configuration with nixos-rebuild..."
-    docker exec "$CONTAINER_NAME" sh -c '
-        # Try to apply the configuration
-        if command -v nixos-rebuild >/dev/null 2>&1; then
-            echo "Using nixos-rebuild to apply configuration..."
-            nixos-rebuild switch
-        else
-            echo "nixos-rebuild not available, falling back to manual service activation..."
-            # Fall back to manual configuration if nixos-rebuild is not available
-            nix-env -i openssh
-            
-            # Create directories
-            mkdir -p /var/run/sshd /root/.ssh /etc/ssh
-            
-            # Generate host keys
-            if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-                ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N ""
-            fi
-            if [ ! -f /etc/ssh/ssh_host_ecdsa_key ]; then
-                ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N ""
-            fi
-            if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
-                ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
-            fi
-            
-            # Create simple SSH configuration
-            cat > /etc/ssh/sshd_config << EOF
-Port 22
-ListenAddress 0.0.0.0
-PermitRootLogin yes
-PubkeyAuthentication yes
-PasswordAuthentication no
-UsePAM no
-StrictModes no
-UsePrivilegeSeparation no
-HostKey /etc/ssh/ssh_host_rsa_key
-HostKey /etc/ssh/ssh_host_ecdsa_key
-HostKey /etc/ssh/ssh_host_ed25519_key
-EOF
-        fi
+        # Verify Nix installation
+        nix --version
     '
     
     # Add SSH key to the container
@@ -285,58 +203,15 @@ EOF
     docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
     docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
     
-    # Start SSH service using systemd if available, otherwise manually
-    log_info "Starting SSH service..."
-    docker exec "$CONTAINER_NAME" sh -c '
-        if systemctl --version >/dev/null 2>&1; then
-            echo "Using systemd to start SSH service..."
-            systemctl enable sshd
-            systemctl start sshd
-            systemctl status sshd
-        else
-            echo "Starting SSH daemon manually..."
-            # Find the SSH daemon binary
-            SSHD_PATH=$(find /nix/store -name sshd -type f 2>/dev/null | head -1)
-            if [ -z "$SSHD_PATH" ]; then
-                SSHD_PATH=$(which sshd)
-            fi
-            
-            if [ -n "$SSHD_PATH" ]; then
-                echo "Starting SSH daemon: $SSHD_PATH"
-                $SSHD_PATH -D -f /etc/ssh/sshd_config &
-            else
-                echo "Could not find SSH daemon"
-                exit 1
-            fi
-        fi
-    '
-    
-    # Give SSH service a moment to start
-    sleep 3
+    # Restart SSH to ensure it's running properly
+    log_info "Ensuring SSH service is running..."
+    docker exec "$CONTAINER_NAME" service ssh restart
     
     # Verify SSH service is running
     log_info "Verifying SSH service status..."
-    docker exec "$CONTAINER_NAME" sh -c '
-        # Check if SSH is running
-        if pgrep -f sshd >/dev/null 2>&1; then
-            echo "SSH daemon is running"
-            
-            # Check listening ports
-            if command -v netstat >/dev/null 2>&1; then
-                netstat -ln | grep :22
-            elif command -v ss >/dev/null 2>&1; then
-                ss -ln | grep :22
-            fi
-        else
-            echo "SSH daemon not found, checking systemd status..."
-            if systemctl --version >/dev/null 2>&1; then
-                systemctl status sshd || true
-            fi
-            exit 1
-        fi
-    '
+    docker exec "$CONTAINER_NAME" service ssh status
     
-    log_success "NixOS container with SSH service is ready"
+    log_success "Nix container with SSH service is ready"
 }
 
 wait_for_container_ready() {
@@ -401,13 +276,19 @@ configure_nix_remote_builder() {
     
     # Test the connection
     log_info "Testing remote builder connection..."
-    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'nix --version' &> /dev/null; then
+    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'source /root/.nix-profile/etc/profile.d/nix.sh && nix --version' &> /dev/null; then
         log_success "Remote builder connection successful"
     else
         log_error "Failed to connect to remote builder"
         log_info "Debug: Testing basic SSH connection..."
         if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'echo "SSH works"'; then
-            log_info "SSH connection works, but Nix might not be properly set up"
+            log_info "SSH connection works, checking Nix installation..."
+            if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'ls -la /root/.nix-profile/'; then
+                log_info "Nix profile exists, trying with explicit sourcing..."
+                ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'source /root/.nix-profile/etc/profile.d/nix.sh && nix --version'
+            else
+                log_error "Nix installation might have failed"
+            fi
         else
             log_error "Basic SSH connection failed"
         fi
