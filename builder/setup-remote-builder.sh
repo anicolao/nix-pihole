@@ -5,8 +5,6 @@ set -euo pipefail
 # This allows building aarch64-linux images from aarch64-darwin (Apple Silicon Macs)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONTAINER_NAME="nix-remote-builder"
-SSH_KEY_PATH="$HOME/.ssh/nix-remote-builder"
 
 # Colors for output
 RED='\033[0;31m'
@@ -52,16 +50,6 @@ check_dependencies() {
     log_success "All dependencies are available"
 }
 
-setup_ssh_key() {
-    log_info "Setting up SSH key for remote builder..."
-    
-    if [[ ! -f "$SSH_KEY_PATH" ]]; then
-        ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -N "" -C "nix-remote-builder"
-        log_success "Created SSH key at $SSH_KEY_PATH"
-    else
-        log_info "SSH key already exists at $SSH_KEY_PATH"
-    fi
-}
 
 start_colima() {
     log_info "Starting Colima..."
@@ -109,127 +97,77 @@ start_colima() {
     fi
 }
 
-wait_for_container_ready() {
+wait_for_colima_ready() {
     local max_wait=60
     local wait_time=0
     
-    log_info "Waiting for container to be ready..."
+    log_info "Waiting for Colima SSH to be ready..."
     
     while [[ $wait_time -lt $max_wait ]]; do
-        # First check if port is open using netcat if available
-        local port_open=false
-        if command -v nc &> /dev/null; then
-            if nc -z localhost 2222 2>/dev/null; then
-                port_open=true
-            fi
-        else
-            # If nc not available, assume port might be open and try SSH directly
-            port_open=true
-        fi
-        
-        # If port seems open, test actual SSH connectivity
-        if [[ "$port_open" == "true" ]]; then
-            if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=2 -o BatchMode=yes root@localhost -p 2222 'exit' &>/dev/null; then
-                log_success "Container SSH is ready after ${wait_time}s"
-                return 0
-            fi
+        # Test if we can connect to Colima via SSH
+        if colima ssh -- 'echo "SSH connection test"' &>/dev/null; then
+            log_success "Colima SSH is ready after ${wait_time}s"
+            return 0
         fi
         
         # Print status update every 5 seconds to avoid spam
         if [[ $((wait_time % 5)) -eq 0 ]] && [[ $wait_time -gt 0 ]]; then
-            log_info "Still waiting for container... (${wait_time}s/${max_wait}s)"
+            log_info "Still waiting for Colima SSH... (${wait_time}s/${max_wait}s)"
         fi
         
         sleep 1
         wait_time=$((wait_time + 1))
     done
     
-    log_error "Container failed to become ready within ${max_wait} seconds"
+    log_error "Colima SSH failed to become ready within ${max_wait} seconds"
     return 1
 }
 
-setup_nix_container() {
-    log_info "Setting up Nix container..."
+setup_nix_in_colima() {
+    log_info "Setting up Nix in Colima VM..."
     
-    # Check if container already exists and is running
-    if docker ps | grep -q "$CONTAINER_NAME"; then
-        log_info "Nix container is already running"
+    # Check if Nix is already installed in Colima
+    if colima ssh -- 'command -v nix' &>/dev/null; then
+        log_info "Nix is already installed in Colima"
+        return 0
+    fi
+    
+    log_info "Installing Nix in Colima VM..."
+    log_info "This may take a few minutes..."
+    
+    # Install Nix in the Colima VM
+    if colima ssh -- 'curl -L https://nixos.org/nix/install | sh -s -- --daemon --yes'; then
+        log_success "Nix installed successfully in Colima"
         
-        # Test if it's actually responsive
-        if docker exec "$CONTAINER_NAME" echo "test" &>/dev/null; then
-            log_success "Existing container is responsive"
-            return 0
+        # Verify Nix is working
+        if colima ssh -- 'source /etc/profile && nix --version' &>/dev/null; then
+            log_success "Nix is working correctly"
         else
-            log_warning "Existing container is unresponsive, restarting..."
-            docker stop "$CONTAINER_NAME" || true
-            docker rm "$CONTAINER_NAME" || true
+            log_error "Nix installation verification failed"
+            return 1
         fi
-    fi
-    
-    # Check if container exists but is stopped
-    if docker ps -a | grep -q "$CONTAINER_NAME"; then
-        log_info "Starting existing Nix container..."
-        if docker start "$CONTAINER_NAME"; then
-            wait_for_container_ready
-            return 0
-        else
-            log_warning "Failed to start existing container, recreating..."
-            docker rm "$CONTAINER_NAME" || true
-        fi
-    fi
-    
-    # Create and start new container
-    log_info "Creating new Nix container..."
-    log_info "This will download the NixOS container image if not already cached..."
-    
-    # Use NixOS container for a full Nix environment
-    if docker run -d \
-        --name "$CONTAINER_NAME" \
-        --platform linux/aarch64 \
-        --privileged \
-        -p 2222:22 \
-        nixos/nix:latest \
-        sh -c '
-            # Install SSH server and other needed packages
-            nix-env -iA nixpkgs.openssh nixpkgs.git
-            
-            # Setup SSH
-            mkdir -p /etc/ssh /root/.ssh
-            ssh-keygen -A
-            
-            # Configure SSH to allow root login
-            echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
-            echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
-            echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
-            
-            # Start SSH daemon and keep container running
-            /usr/bin/sshd -D
-        '; then
-        log_info "Container started, waiting for SSH to be ready..."
     else
-        log_error "Failed to start container"
-        return 1
-    fi
-    
-    # Wait for container to be ready with proper polling
-    if wait_for_container_ready; then
-        log_info "Setting up SSH keys in container..."
-        
-        # Copy SSH public key to container
-        docker exec "$CONTAINER_NAME" mkdir -p /root/.ssh
-        docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
-        docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
-        docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
-        
-        log_success "Nix container is ready"
-    else
-        log_error "Container failed to become ready"
+        log_error "Failed to install Nix in Colima"
         return 1
     fi
 }
 
 configure_nix_remote_builder() {
     log_info "Configuring Nix remote builder..."
+    
+    # Get Colima's SSH connection details
+    local colima_ssh_config
+    colima_ssh_config=$(colima ssh-config 2>/dev/null) || {
+        log_error "Failed to get Colima SSH configuration"
+        return 1
+    }
+    
+    # Extract SSH details from colima ssh-config
+    local ssh_host ssh_port ssh_user ssh_key
+    ssh_host=$(echo "$colima_ssh_config" | grep "HostName" | awk '{print $2}')
+    ssh_port=$(echo "$colima_ssh_config" | grep "Port" | awk '{print $2}')
+    ssh_user=$(echo "$colima_ssh_config" | grep "User" | awk '{print $2}')
+    ssh_key=$(echo "$colima_ssh_config" | grep "IdentityFile" | awk '{print $2}')
     
     # Create or update nix.conf
     NIX_CONF_DIR="$HOME/.config/nix"
@@ -239,12 +177,12 @@ configure_nix_remote_builder() {
     
     # Remove existing remote builder configuration
     if [[ -f "$NIX_CONF_FILE" ]]; then
-        grep -v "builders.*ssh://root@localhost:2222" "$NIX_CONF_FILE" > "$NIX_CONF_FILE.tmp" || true
+        grep -v "builders.*ssh://" "$NIX_CONF_FILE" > "$NIX_CONF_FILE.tmp" || true
         mv "$NIX_CONF_FILE.tmp" "$NIX_CONF_FILE"
     fi
     
-    # Add remote builder configuration
-    echo "builders = ssh://root@localhost:2222 aarch64-linux $SSH_KEY_PATH 10 1 big-parallel,benchmark" >> "$NIX_CONF_FILE"
+    # Add remote builder configuration using Colima's SSH details
+    echo "builders = ssh://${ssh_user}@${ssh_host}:${ssh_port} aarch64-linux ${ssh_key} 10 1 big-parallel,benchmark" >> "$NIX_CONF_FILE"
     
     # Enable builders use
     if ! grep -q "builders-use-substitutes = true" "$NIX_CONF_FILE"; then
@@ -253,7 +191,7 @@ configure_nix_remote_builder() {
     
     # Test the connection
     log_info "Testing remote builder connection..."
-    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'nix --version' &> /dev/null; then
+    if colima ssh -- 'source /etc/profile && nix --version' &> /dev/null; then
         log_success "Remote builder connection successful"
     else
         log_error "Failed to connect to remote builder"
@@ -275,7 +213,7 @@ print_usage_instructions() {
     echo "   nix build .#packages.aarch64-linux.rpi4-image"
     echo ""
     echo "3. To stop the remote builder when done:"
-    echo "   docker stop $CONTAINER_NAME"
+    echo "   colima stop"
     echo ""
     echo "4. To restart the remote builder later:"
     echo "   $0"
@@ -285,9 +223,8 @@ print_usage_instructions() {
 
 cleanup_on_exit() {
     if [[ $? -ne 0 ]]; then
-        log_error "Setup failed. Cleaning up..."
-        docker stop "$CONTAINER_NAME" 2>/dev/null || true
-        docker rm "$CONTAINER_NAME" 2>/dev/null || true
+        log_error "Setup failed. You may need to restart Colima:"
+        log_info "  colima stop && colima start --arch aarch64 --cpu 4 --memory 8 --disk 40"
     fi
 }
 
@@ -297,9 +234,9 @@ main() {
     log_info "Setting up Nix remote builder with Colima..."
     
     check_dependencies
-    setup_ssh_key
     start_colima
-    setup_nix_container
+    wait_for_colima_ready
+    setup_nix_in_colima
     configure_nix_remote_builder
     print_usage_instructions
 }

@@ -74,7 +74,7 @@ test_remote_builder_config() {
     
     local nix_conf="$HOME/.config/nix/nix.conf"
     
-    if [[ -f "$nix_conf" ]] && grep -q "ssh://root@localhost:2222" "$nix_conf"; then
+    if [[ -f "$nix_conf" ]] && grep -q "ssh://.*aarch64-linux" "$nix_conf"; then
         log_success "Remote builder is configured in nix.conf"
         return 0
     else
@@ -83,36 +83,26 @@ test_remote_builder_config() {
     fi
 }
 
-test_container_status() {
-    log_info "Testing Nix container status..."
+test_nix_in_colima() {
+    log_info "Testing Nix installation in Colima..."
     
-    if docker ps | grep -q "nix-remote-builder"; then
-        log_success "Nix remote builder container is running"
+    if colima ssh -- 'source /etc/profile && nix --version' &> /dev/null; then
+        log_success "Nix is installed and working in Colima"
         return 0
-    elif docker ps -a | grep -q "nix-remote-builder"; then
-        log_warning "Nix remote builder container exists but is not running"
-        return 1
     else
-        log_warning "Nix remote builder container does not exist"
+        log_warning "Nix is not working in Colima"
         return 1
     fi
 }
 
-test_ssh_connection() {
-    log_info "Testing SSH connection to remote builder..."
+test_colima_ssh_connection() {
+    log_info "Testing SSH connection to Colima..."
     
-    local ssh_key="$HOME/.ssh/nix-remote-builder"
-    
-    if [[ ! -f "$ssh_key" ]]; then
-        log_warning "SSH key not found at $ssh_key"
-        return 1
-    fi
-    
-    if ssh -i "$ssh_key" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'nix --version' &> /dev/null; then
-        log_success "SSH connection to remote builder is working"
+    if colima ssh -- 'echo "SSH test successful"' &> /dev/null; then
+        log_success "SSH connection to Colima is working"
         return 0
     else
-        log_warning "SSH connection to remote builder failed"
+        log_warning "SSH connection to Colima failed"
         return 1
     fi
 }
@@ -157,16 +147,16 @@ run_all_tests() {
     fi
     echo ""
     
-    # Test container status
+    # Test Nix in Colima
     total_tests=$((total_tests + 1))
-    if test_container_status; then
+    if test_nix_in_colima; then
         passed_tests=$((passed_tests + 1))
     fi
     echo ""
     
-    # Test SSH connection
+    # Test Colima SSH connection
     total_tests=$((total_tests + 1))
-    if test_ssh_connection; then
+    if test_colima_ssh_connection; then
         passed_tests=$((passed_tests + 1))
     fi
     echo ""

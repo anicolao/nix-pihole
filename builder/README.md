@@ -45,9 +45,10 @@ cd .. && nix build path:$PWD#images.rpi4
 
 ## How It Works
 
-The builder uses Colima to create an aarch64-linux container that acts as a remote builder for Nix. This approach:
+The builder uses the Colima VM directly as a remote builder for Nix. This approach:
 
-- Avoids complex cross-compilation issues
+- Avoids complex cross-compilation issues  
+- Uses the Colima VM natively without nested containers
 - Provides native aarch64-linux builds instead of cross-compilation
 - Works reliably on Apple Silicon Macs
 - Maintains compatibility with the original flake structure
@@ -84,14 +85,14 @@ If you see warnings about disk resizing (e.g., "unable to resize disk"), you lik
 nix develop ./builder -c ./builder/make-image.sh
 ```
 
-**Container startup issues:**
-If the Nix container fails to start or become ready:
+**Colima startup issues:**
+If the Colima VM fails to start or SSH becomes unresponsive:
 
 ```bash
-# Check if Docker is running
-docker ps
+# Check Colima status
+colima status
 
-# Restart Colima with correct settings
+# Restart Colima with correct settings  
 colima stop
 colima start --arch aarch64 --cpu 4 --memory 8 --disk 40
 
@@ -104,16 +105,12 @@ colima start --arch aarch64 --cpu 4 --memory 8 --disk 40
 If automatic cleanup doesn't work, manually clean up:
 
 ```bash
-# Stop and remove containers
-docker stop nix-remote-builder
-docker rm nix-remote-builder
-
 # Stop and delete Colima
 colima stop
 colima delete --force colima
 
-# Remove Nix remote builder config
-grep -v "ssh://root@localhost:2222" ~/.config/nix/nix.conf > ~/.config/nix/nix.conf.tmp
+# Remove Nix remote builder config (adjust grep pattern if needed)
+grep -v "ssh://.*aarch64-linux" ~/.config/nix/nix.conf > ~/.config/nix/nix.conf.tmp
 mv ~/.config/nix/nix.conf.tmp ~/.config/nix/nix.conf
 ```
 
@@ -136,8 +133,8 @@ colima status
 ### 5. Getting Help
 
 If issues persist, check:
-1. The container logs: `docker logs nix-remote-builder`
-2. Colima status: `colima status`
+1. Colima status: `colima status`
+2. Colima SSH connectivity: `colima ssh -- 'echo test'`
 3. Nix configuration: `cat ~/.config/nix/nix.conf`
 
 ## Scripts
