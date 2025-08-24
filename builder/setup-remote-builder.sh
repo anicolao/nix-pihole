@@ -163,6 +163,11 @@ setup_nix_container() {
     log_info "Configuring SSH server..."
     docker exec "$CONTAINER_NAME" mkdir -p /etc/ssh /root/.ssh
     
+    # Create sshd user for privilege separation (required by modern SSH)
+    log_info "Creating sshd system user..."
+    docker exec "$CONTAINER_NAME" sh -c 'groupadd -r sshd 2>/dev/null || true'
+    docker exec "$CONTAINER_NAME" sh -c 'useradd -r -g sshd -d /var/empty -s /bin/false sshd 2>/dev/null || true'
+    
     # Generate host keys
     if ! docker exec "$CONTAINER_NAME" ssh-keygen -A; then
         log_error "Failed to generate SSH host keys"
