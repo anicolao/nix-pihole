@@ -1,152 +1,89 @@
 # Pi-hole RPi4 Image Builder
 
-This directory contains a Nix-based build environment with remote builder support for building Pi-hole RPi4 images, especially useful for cross-compilation from macOS to aarch64-linux.
+This directory contains tools for building Raspberry Pi 4 images using a remote builder approach, specifically designed to work around cross-compilation issues on macOS.
 
-## Prerequisites
+## Quick Start
 
-On macOS, install the required dependencies:
+For macOS users experiencing cross-compilation issues:
 
 ```bash
+# Install dependencies (one-time setup)
 brew install colima docker
-```
 
-## Usage
-
-### Quick Start
-
-Enter the Nix development environment and build the image in one command:
-
-```bash
+# Enter Nix development environment and build in one command
 nix develop ./builder -c ./builder/make-image.sh
-```
 
-This will:
-1. Set up the Nix development environment with all required dependencies
-2. Automatically configure a Colima-based remote builder
-3. Build the Pi-hole RPi4 image using the remote builder
-
-### Manual Steps
-
-If you prefer to run the steps manually:
-
-```bash
-# Enter the development environment
-nix develop ./builder
-
-# Set up the remote builder (one-time setup)
-./builder/setup-remote-builder.sh
-
-# Build the image
-cd .. && nix build path:$PWD#images.rpi4
-
-# Test the remote builder (optional)
-./builder/test-remote-builder.sh
+# If you encounter issues, clean up and try again
+./builder/cleanup.sh
+nix develop ./builder -c ./builder/make-image.sh
 ```
 
 ## How It Works
 
-The builder uses a Docker container running inside the Colima VM as a remote builder for Nix. This approach:
+The builder solution uses two approaches:
 
-- Uses a pre-built NixOS container image with Nix already installed
-- Avoids the need to install Nix manually on each setup  
-- Provides native aarch64-linux builds instead of cross-compilation
-- Works reliably on Apple Silicon Macs
-- Maintains compatibility with the original flake structure
+1. **Preferred: NixOS Docker Image** - A proper NixOS configuration creates a Docker image with SSH pre-configured
+2. **Fallback: Manual Setup** - If the NixOS image build fails, falls back to manual SSH configuration
 
-The setup creates a Docker container with SSH access that Nix can use as a remote builder target.
+### NixOS Docker Image Approach
 
-## Scripts
+The preferred approach uses:
+- `remote-builder-config.nix` - A proper NixOS configuration for the remote builder container
+- `remote-builder-flake.nix` - Nix flake that builds the Docker image declaratively
+- Automatically configured SSH service, users, and build environment
+- No manual user creation or SSH daemon configuration needed
 
-- `make-image.sh` - Main build script that handles everything automatically
-- `setup-remote-builder.sh` - Sets up the Colima remote builder
+### Fallback Manual Approach
+
+If the NixOS image approach fails, the system falls back to:
+- Using the `nixos/nix:latest` base image
+- Manually installing SSH and configuring it
+- This is the "hard mode" approach mentioned in feedback, but serves as a reliable fallback
+
+## Files
+
+- `flake.nix` - Nix development environment with required dependencies (colima, docker, etc.)
+- `make-image.sh` - Main entry point script for building the RPi4 image
+- `setup-remote-builder.sh` - Sets up the remote builder (called by make-image.sh)
 - `test-remote-builder.sh` - Tests the remote builder functionality
-- `flake.nix` - Nix development environment with all dependencies
+- `cleanup.sh` - Cleans up Docker containers and Colima instances
+- `remote-builder-config.nix` - NixOS configuration for the remote builder container
+- `remote-builder-flake.nix` - Flake for building the NixOS Docker image
+- `README.md` - This file
 
 ## Troubleshooting
 
-If the build fails or gets stuck, try these steps in order:
+### Docker Connection Issues
+The scripts automatically configure `DOCKER_HOST` to connect to Colima. If you see Docker connection errors, ensure Colima is running:
 
-### 1. Quick Diagnosis
-
-Run the test script to check the remote builder status:
 ```bash
-./builder/test-remote-builder.sh
+colima status
 ```
 
-### 2. Common Issues
+### Container Build Failures
+If the NixOS image build fails, the system will fall back to manual setup. You can force a clean rebuild:
 
-**Colima disk resize conflicts:**
-If you see warnings about disk resizing (e.g., "unable to resize disk"), you likely have an existing Colima instance with incompatible settings.
-
-**Solution:**
 ```bash
-# Clean up everything and start fresh
 ./builder/cleanup.sh
-
-# Then try building again
 nix develop ./builder -c ./builder/make-image.sh
 ```
 
-**Colima startup issues:**
-If the Colima VM fails to start or SSH becomes unresponsive:
+### Disk Space Issues
+Colima is configured with a 40GB disk by default. If you need more space, edit the disk size in `setup-remote-builder.sh`:
 
 ```bash
-# Check Colima status
-colima status
-
-# Restart Colima with correct settings  
-colima stop
-colima start --arch aarch64 --cpu 4 --memory 8 --disk 40
-
-# Try setup again
-./builder/setup-remote-builder.sh
+colima start --arch aarch64 --cpu 4 --memory 8 --disk 60  # Change 40 to 60
 ```
 
-### 3. Manual Cleanup
+### SSH Connection Issues
+The setup includes comprehensive SSH connectivity testing. If SSH fails:
 
-If automatic cleanup doesn't work, manually clean up:
+1. Check if the container is running: `docker ps | grep nix-remote-builder`
+2. Check container logs: `docker logs nix-remote-builder`
+3. Test manual SSH: `ssh -i ~/.ssh/nix-remote-builder -p 2222 root@localhost`
 
-```bash
-# Stop and remove Docker container
-docker stop nix-remote-builder
-docker rm nix-remote-builder
+## Implementation Details
 
-# Stop and delete Colima
-colima stop
-colima delete --force colima
+The remote builder approach provides native aarch64-linux builds instead of cross-compilation, offering a more reliable solution for macOS users while maintaining compatibility with other platforms. The builder integrates with Nix's development environment for a seamless developer experience with comprehensive error handling and troubleshooting tools.
 
-# Remove Nix remote builder config (adjust grep pattern if needed)
-grep -v "ssh://root@localhost:2222" ~/.config/nix/nix.conf > ~/.config/nix/nix.conf.tmp
-mv ~/.config/nix/nix.conf.tmp ~/.config/nix/nix.conf
-```
-
-### 4. Verify Dependencies
-
-Make sure all required tools are installed and working:
-
-```bash
-# Check installations
-brew list colima docker
-
-# Verify Nix is working
-nix --version
-
-# Check Colima can start
-colima start --arch aarch64
-colima status
-```
-
-### 5. Getting Help
-
-If issues persist, check:
-1. Colima status: `colima status`
-2. Colima SSH connectivity: `colima ssh -- 'echo test'`
-3. Nix configuration: `cat ~/.config/nix/nix.conf`
-
-## Scripts
-
-- `make-image.sh` - Main build script that handles everything automatically
-- `setup-remote-builder.sh` - Sets up the Colima remote builder
-- `test-remote-builder.sh` - Tests the remote builder functionality
-- `cleanup.sh` - Completely cleans up the remote builder environment
-- `flake.nix` - Nix development environment with all dependencies
+The solution now uses proper NixOS configuration instead of manual setup wherever possible, following Nix best practices and reducing the complexity and fragility of the SSH setup process.

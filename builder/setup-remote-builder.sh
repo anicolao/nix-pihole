@@ -66,7 +66,6 @@ setup_ssh_key() {
     fi
 }
 
-
 start_colima() {
     log_info "Starting Colima..."
     
@@ -129,139 +128,92 @@ setup_nix_container() {
         return 0
     fi
     
-    # Create and start new container
-    log_info "Creating new Nix container..."
+    # Use a simple approach with a standard Ubuntu image and install what we need
+    log_info "Creating new Nix container using Ubuntu base with SSH pre-installed..."
     
-    # Use NixOS container for a full Nix environment
-    # Start container with a simple command that keeps it running
+    # Start Ubuntu container with SSH already available
     docker run -d \
         --name "$CONTAINER_NAME" \
         --platform linux/aarch64 \
         --privileged \
         -p 2222:22 \
-        nixos/nix:latest \
+        ubuntu:22.04 \
+        sh -c '
+        # Install SSH server and curl
+        apt-get update -qq && apt-get install -y -qq openssh-server curl sudo
+        
+        # Configure SSH properly
+        mkdir -p /var/run/sshd /root/.ssh
+        sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin yes/" /etc/ssh/sshd_config
+        sed -i "s/#PubkeyAuthentication yes/PubkeyAuthentication yes/" /etc/ssh/sshd_config
+        
+        # Install Nix (single-user mode for simplicity)
+        curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
+        
+        # Configure Nix environment
+        echo "source /root/.nix-profile/etc/profile.d/nix.sh" >> /root/.bashrc
+        . /root/.nix-profile/etc/profile.d/nix.sh
+        
+        # Configure Nix for remote building
+        mkdir -p /etc/nix
+        cat > /etc/nix/nix.conf << EOF
+experimental-features = nix-command flakes
+trusted-users = root
+sandbox = false
+EOF
+        
+        # Start SSH daemon and keep container running
+        /usr/sbin/sshd -D &
+        
+        # Keep container alive
         tail -f /dev/null
+        '
     
-    # Wait a moment for container to start
-    sleep 2
+    # Wait for installation to complete
+    log_info "Waiting for container setup to complete..."
+    log_info "This may take a few minutes for Nix installation..."
     
-    # Verify container is still running
+    # Wait and check periodically if container is still running
+    local setup_time=0
+    local max_setup_time=300  # 5 minutes max for setup
+    
+    while [[ $setup_time -lt $max_setup_time ]]; do
+        if ! docker ps | grep -q "$CONTAINER_NAME"; then
+            log_error "Container exited during setup"
+            log_info "Container logs:"
+            docker logs "$CONTAINER_NAME" 2>&1 | tail -30
+            return 1
+        fi
+        
+        # Check if SSH is ready every 15 seconds
+        if [[ $((setup_time % 15)) -eq 0 ]] && [[ $setup_time -gt 30 ]]; then
+            if nc -z localhost 2222 >/dev/null 2>&1; then
+                log_info "SSH port is ready, setup likely complete"
+                break
+            fi
+        fi
+        
+        if [[ $((setup_time % 30)) -eq 0 ]] && [[ $setup_time -gt 0 ]]; then
+            log_info "Still setting up container... (${setup_time}s/${max_setup_time}s)"
+        fi
+        
+        sleep 5
+        setup_time=$((setup_time + 5))
+    done
+    
+    # Verify final state
     if ! docker ps | grep -q "$CONTAINER_NAME"; then
-        log_error "Container failed to start or exited immediately"
-        log_info "Container logs:"
-        docker logs "$CONTAINER_NAME" 2>&1 | head -20
+        log_error "Container setup failed - container not running"
         return 1
     fi
     
-    # Set up SSH server inside the running container
-    log_info "Installing SSH server and diagnostic tools in container..."
-    if ! docker exec "$CONTAINER_NAME" nix-env -iA nixpkgs.openssh nixpkgs.git nixpkgs.netcat nixpkgs.procps; then
-        log_error "Failed to install SSH server packages"
-        return 1
-    fi
-    
-    log_info "Configuring SSH server..."
-    docker exec "$CONTAINER_NAME" mkdir -p /etc/ssh /root/.ssh
-    
-    # Create sshd user for privilege separation (required by modern SSH)
-    log_info "Creating sshd system user..."
-    docker exec "$CONTAINER_NAME" sh -c 'groupadd -r sshd 2>/dev/null || true'
-    docker exec "$CONTAINER_NAME" sh -c 'useradd -r -g sshd -d /var/empty -s /bin/false sshd 2>/dev/null || true'
-    
-    # Generate host keys
-    if ! docker exec "$CONTAINER_NAME" ssh-keygen -A; then
-        log_error "Failed to generate SSH host keys"
-        return 1
-    fi
-    
-    # Create a minimal SSH configuration that should work
-    docker exec "$CONTAINER_NAME" sh -c 'cat > /etc/ssh/sshd_config << EOF
-# Basic SSH configuration for container
-Port 22
-PermitRootLogin yes
-PubkeyAuthentication yes
-PasswordAuthentication no
-UsePAM no
-StrictModes no
-# Use default host key locations
-HostKey /etc/ssh/ssh_host_rsa_key
-HostKey /etc/ssh/ssh_host_ecdsa_key
-HostKey /etc/ssh/ssh_host_ed25519_key
-EOF'
-    
-    # Copy SSH public key to container
+    # Add SSH key
+    log_info "Adding SSH public key to container..."
     docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
     docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
     docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
     
-    # Find the correct path for sshd and test it
-    log_info "Finding SSH daemon binary..."
-    local sshd_path
-    sshd_path=$(docker exec "$CONTAINER_NAME" sh -c 'find /nix/store -name sshd -type f -executable 2>/dev/null | head -1')
-    
-    if [[ -z "$sshd_path" ]]; then
-        log_error "SSH daemon not found in container after installation"
-        log_info "Available SSH-related binaries:"
-        docker exec "$CONTAINER_NAME" sh -c 'find /nix/store -name "*ssh*" -type f -executable 2>/dev/null | head -10' || true
-        return 1
-    fi
-    
-    log_info "Found SSH daemon at: $sshd_path"
-    
-    # Test SSH daemon configuration
-    log_info "Testing SSH daemon configuration..."
-    if ! docker exec "$CONTAINER_NAME" "$sshd_path" -T; then
-        log_error "SSH daemon configuration test failed"
-        log_info "SSH configuration:"
-        docker exec "$CONTAINER_NAME" cat /etc/ssh/sshd_config || true
-        return 1
-    fi
-    
-    log_info "Starting SSH daemon..."
-    # Start SSH daemon with better error handling
-    if ! docker exec -d "$CONTAINER_NAME" sh -c "
-        echo 'Starting SSH daemon...' >&2
-        exec '$sshd_path' -D -e -f /etc/ssh/sshd_config
-    "; then
-        log_error "Failed to start SSH daemon"
-        return 1
-    fi
-    
-    # Give SSH daemon a moment to start
-    sleep 3
-    
-    # Verify container is still running after SSH setup
-    if ! docker ps | grep -q "$CONTAINER_NAME"; then
-        log_error "Container exited after SSH daemon setup"
-        log_info "Container logs:"
-        docker logs "$CONTAINER_NAME" 2>&1 | tail -20
-        return 1
-    fi
-    
-    # Check if SSH daemon process is running
-    log_info "Verifying SSH daemon is running..."
-    if docker exec "$CONTAINER_NAME" pgrep sshd >/dev/null 2>&1; then
-        log_success "SSH daemon is running"
-    else
-        log_error "SSH daemon is not running"
-        log_info "Checking for SSH daemon processes:"
-        docker exec "$CONTAINER_NAME" ps aux | grep -E "(ssh|SSH)" || true
-        log_info "Recent container logs:"
-        docker logs "$CONTAINER_NAME" 2>&1 | tail -10
-        return 1
-    fi
-    
-    # Test if SSH port is accessible from inside container
-    log_info "Testing SSH port accessibility..."
-    if docker exec "$CONTAINER_NAME" nc -z localhost 22 >/dev/null 2>&1; then
-        log_success "SSH port 22 is accessible inside container"
-    else
-        log_warning "SSH port 22 is not accessible inside container"
-        log_info "Checking listening ports:"
-        docker exec "$CONTAINER_NAME" netstat -tlnp 2>/dev/null | grep :22 || true
-    fi
-    
-    log_success "Nix container is ready"
+    log_success "Ubuntu container with Nix and SSH is ready"
 }
 
 wait_for_container_ready() {
@@ -326,7 +278,7 @@ configure_nix_remote_builder() {
     
     # Test the connection
     log_info "Testing remote builder connection..."
-    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'nix --version' &> /dev/null; then
+    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'source /root/.nix-profile/etc/profile.d/nix.sh && nix --version' &> /dev/null; then
         log_success "Remote builder connection successful"
     else
         log_error "Failed to connect to remote builder"
@@ -373,7 +325,7 @@ cleanup_on_exit() {
 main() {
     trap cleanup_on_exit EXIT
     
-    log_info "Setting up Nix remote builder with Colima and Docker container..."
+    log_info "Setting up Nix remote builder with Colima and Ubuntu container..."
     
     check_dependencies
     setup_ssh_key
