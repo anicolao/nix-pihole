@@ -105,7 +105,8 @@ wait_for_colima_ready() {
     
     while [[ $wait_time -lt $max_wait ]]; do
         # Test if we can connect to Colima via SSH
-        if colima ssh -- 'echo "SSH connection test"' &>/dev/null; then
+        # Use the exact same command syntax that works in user's terminal
+        if colima ssh -- echo hi >/dev/null 2>&1; then
             log_success "Colima SSH is ready after ${wait_time}s"
             return 0
         fi
@@ -113,6 +114,13 @@ wait_for_colima_ready() {
         # Print status update every 5 seconds to avoid spam
         if [[ $((wait_time % 5)) -eq 0 ]] && [[ $wait_time -gt 0 ]]; then
             log_info "Still waiting for Colima SSH... (${wait_time}s/${max_wait}s)"
+            # Add debug output to help diagnose issues
+            log_info "Debug: Testing 'colima ssh -- echo hi' command..."
+            if colima ssh -- echo hi 2>&1 | head -1 >&2; then
+                log_info "Debug: Command succeeded but may have taken too long on first try"
+            else
+                log_info "Debug: Command failed with exit code $?"
+            fi
         fi
         
         sleep 1
@@ -120,6 +128,12 @@ wait_for_colima_ready() {
     done
     
     log_error "Colima SSH failed to become ready within ${max_wait} seconds"
+    log_error "Debug: Final manual test..."
+    if colima ssh -- echo hi; then
+        log_error "Paradox: manual test succeeded but loop failed - possible timing issue"
+    else
+        log_error "Manual test also failed - connection issue"
+    fi
     return 1
 }
 
