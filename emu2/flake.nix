@@ -23,8 +23,6 @@
               pkgs.qemu_full
               # Include QEMU firmware for proper EFI/UEFI support
               pkgs.qemu-utils
-              # UEFI firmware for ARM64 emulation
-              pkgs.OVMF
               # Basic utilities 
               pkgs.file
             ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
@@ -32,6 +30,9 @@
             ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               # Linux utilities for inspection (optional)
               pkgs.util-linux
+            ] ++ pkgs.lib.optionals (builtins.hasAttr "OVMF" pkgs && !(pkgs.OVMF.meta.broken or false)) [
+              # UEFI firmware for ARM64 emulation (optional - fallback to system firmware if not available)
+              pkgs.OVMF
             ];
             
             shellHook = ''
@@ -47,7 +48,11 @@
               echo ""
               echo "Available tools:"
               echo "  - qemu-system-aarch64: ARM64 emulator with full firmware support"
+              ${if (builtins.hasAttr "OVMF" pkgs && !(pkgs.OVMF.meta.broken or false)) then ''
               echo "  - UEFI firmware (OVMF): For modern Pi4 UEFI images"
+              '' else ''
+              echo "  - UEFI firmware: Install qemu-efi-aarch64 or OVMF package for UEFI support"
+              ''}
               echo "  - file: File type detection"
               ${if pkgs.stdenv.isDarwin then ''
               echo "  - Running on macOS with native support"
