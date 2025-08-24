@@ -77,6 +77,36 @@ start_colima() {
     fi
 }
 
+wait_for_container_ready() {
+    local max_wait=60
+    local wait_time=0
+    
+    log_info "Waiting for container to be ready..."
+    
+    while [[ $wait_time -lt $max_wait ]]; do
+        # Try to connect using netcat to check if SSH port is responsive
+        if command -v nc &> /dev/null && nc -z localhost 2222 2>/dev/null; then
+            log_success "Container SSH port is responsive after ${wait_time}s"
+            return 0
+        # Fallback to testing SSH connection directly if netcat is not available
+        elif ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=2 -o BatchMode=yes root@localhost -p 2222 'exit' &>/dev/null; then
+            log_success "Container SSH is ready after ${wait_time}s"
+            return 0
+        fi
+        
+        # Print status update every 5 seconds to avoid spam
+        if [[ $((wait_time % 5)) -eq 0 ]] && [[ $wait_time -gt 0 ]]; then
+            log_info "Still waiting for container... (${wait_time}s/${max_wait}s)"
+        fi
+        
+        sleep 1
+        ((wait_time++))
+    done
+    
+    log_error "Container failed to become ready within ${max_wait} seconds"
+    return 1
+}
+
 setup_nix_container() {
     log_info "Setting up Nix container..."
     
@@ -90,6 +120,7 @@ setup_nix_container() {
     if docker ps -a | grep -q "$CONTAINER_NAME"; then
         log_info "Starting existing Nix container..."
         docker start "$CONTAINER_NAME"
+        wait_for_container_ready
         return 0
     fi
     
@@ -120,9 +151,8 @@ setup_nix_container() {
             /usr/bin/sshd -D
         '
     
-    # Wait for container to be ready
-    log_info "Waiting for container to be ready..."
-    sleep 10
+    # Wait for container to be ready with proper polling
+    wait_for_container_ready
     
     # Copy SSH public key to container
     docker exec "$CONTAINER_NAME" mkdir -p /root/.ssh
