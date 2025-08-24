@@ -32,12 +32,13 @@ OPTIONS:
                     raspi4b: Raspberry Pi 4 hardware emulation (most accurate)
                     virt: Generic ARM virtualization platform (better console support)
                     test: Minimal test configuration for console debugging
-    --console MODE  Serial console mode for nographic (mux|telnet|none|debug|inspect) (default: mux)
+    --console MODE  Serial console mode for nographic (mux|telnet|none|debug|inspect|firmware) (default: mux)
                     mux: multiplexed console (Ctrl-A c to switch monitor/serial)
                     telnet: serial via telnet on port 4444  
                     none: disable monitor, serial only to stdio
                     debug: log all serial devices to files for troubleshooting
                     inspect: comprehensive analysis mode - logs everything + shows system state
+                    firmware: focus on boot firmware diagnostics with minimal logging
                     NOTE: Console mapping depends on machine type and image configuration
 
 EXAMPLES:
@@ -45,6 +46,7 @@ EXAMPLES:
     $0 --machine virt --console none nixos-sd-image-rpi4.img
     $0 --console debug nixos-sd-image-rpi4.img
     $0 --machine test --console inspect nixos-sd-image-rpi4.img
+    $0 --console firmware nixos-sd-image-rpi4.img
     $0 --port 2222 nixos-sd-image-rpi4.img
     $0 --vnc 5901 --memory 1G nixos-sd-image-rpi4.img
     $0 --dry-run nixos-sd-image-rpi4.img
@@ -57,11 +59,12 @@ MACHINE TYPE NOTES:
 CONSOLE TROUBLESHOOTING:
     If you see no console output with any machine or console mode:
     1. Try: --machine test --console inspect (minimal test config with analysis)
-    2. Try: --machine virt --console inspect
+    2. Try: --console firmware (focused boot diagnostics)
     3. Check if your NixOS image has these kernel parameters: console=ttyAMA0,115200 console=ttyS0,115200
     4. Verify the image boots by checking CPU/memory usage in another terminal
     5. The image may not have serial console enabled - check systemd getty configuration
     6. Run ./troubleshoot-console.sh (created in inspect mode) to analyze log files
+    7. If only CPU resets occur in debug logs: bootloader/firmware issue, not console config
 
 This script boots the image just like real hardware would:
 1. QEMU emulates the specified hardware platform  
@@ -171,9 +174,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --console)
             CONSOLE_MODE="$2"
-            if [[ "$CONSOLE_MODE" != "mux" && "$CONSOLE_MODE" != "telnet" && "$CONSOLE_MODE" != "none" && "$CONSOLE_MODE" != "debug" && "$CONSOLE_MODE" != "inspect" ]]; then
+            if [[ "$CONSOLE_MODE" != "mux" && "$CONSOLE_MODE" != "telnet" && "$CONSOLE_MODE" != "none" && "$CONSOLE_MODE" != "debug" && "$CONSOLE_MODE" != "inspect" && "$CONSOLE_MODE" != "firmware" ]]; then
                 echo "❌ Invalid console mode: $CONSOLE_MODE"
-                echo "   Valid modes: mux, telnet, none, debug, inspect"
+                echo "   Valid modes: mux, telnet, none, debug, inspect, firmware"
                 exit 1
             fi
             shift 2
@@ -298,7 +301,15 @@ else
                     QEMU_CMD+=(-serial "file:serial-${i}.log")
                 done
                 # Add debugging options to see what's happening
-                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset -D qemu-debug.log)
+                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset,exec,in_asm,op_opt -D qemu-debug.log)
+                ;;
+            "firmware")
+                # Focus on boot firmware diagnostics
+                QEMU_CMD+=(-nographic -monitor stdio)
+                # Minimal serial logging for boot analysis
+                QEMU_CMD+=(-serial "file:boot-console.log")
+                # Focused debugging on boot process and firmware
+                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset,exec -D boot-firmware.log)
                 ;;
         esac
     else
@@ -332,8 +343,16 @@ else
                 QEMU_CMD+=(-serial "file:raspi-serial-3.log")  # Additional UARTs
                 QEMU_CMD+=(-serial "file:raspi-serial-4.log")
                 QEMU_CMD+=(-serial "file:raspi-serial-5.log")
-                # Enable comprehensive debugging
-                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset,int -D qemu-raspi-debug.log)
+                # Enable comprehensive debugging including boot diagnostics
+                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset,int,exec,in_asm,op_opt -D qemu-raspi-debug.log)
+                ;;
+            "firmware")
+                # Focus on boot firmware diagnostics for Pi4
+                QEMU_CMD+=(-nographic -monitor stdio)
+                # Single serial log for boot analysis
+                QEMU_CMD+=(-serial "file:raspi-boot-console.log")
+                # Focused debugging on boot process
+                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset,exec -D raspi-boot-firmware.log)
                 ;;
         esac
     fi
@@ -408,6 +427,20 @@ else
                 echo "   Use QEMU monitor commands: info registers, info qtree, info chardev"
                 echo "   Press Ctrl-A x to exit"
                 ;;
+            "firmware")
+                if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
+                    echo "   Boot firmware analysis mode:"
+                    echo "   - Console log: boot-console.log"
+                    echo "   - Firmware debug: boot-firmware.log"
+                else
+                    echo "   Pi4 boot firmware analysis mode:"
+                    echo "   - Console log: raspi-boot-console.log"
+                    echo "   - Firmware debug: raspi-boot-firmware.log"
+                fi
+                echo "   Monitor with: tail -f *boot*.log"
+                echo "   Use QEMU monitor: info registers, info status"
+                echo "   Press Ctrl-A x to exit"
+                ;;
         esac
     fi
     echo ""
@@ -425,7 +458,7 @@ check_logs() {
     local found_output=false
     echo "📋 Checking log files for output..."
     
-    for log in *serial*.log qemu*.log; do
+    for log in *serial*.log *boot*.log qemu*.log; do
         if [[ -f "$log" ]]; then
             local size=$(stat -f%z "$log" 2>/dev/null || stat -c%s "$log" 2>/dev/null || echo "0")
             if [[ "$size" -gt 0 ]]; then
@@ -446,11 +479,19 @@ check_logs() {
         echo "   3. Kernel parameters missing console= directives"
         echo "   4. systemd getty not enabled for serial console"
         echo ""
-        echo "🔍 Next steps to try:"
+        echo "🔍 CRITICAL: Check qemu-debug.log or qemu-raspi-debug.log for boot analysis:"
+        echo "   - If only CPU resets shown: Boot process not starting"
+        echo "   - Look for 'Trying to execute code' messages to see if bootloader runs"
+        echo "   - Check for SD card/storage access attempts"
+        echo "   - Monitor for any actual instruction execution beyond resets"
+        echo ""
+        echo "🔧 Advanced troubleshooting steps:"
         echo "   1. Check if the image is actually booting (monitor CPU usage)"
         echo "   2. Try mounting the image to check /boot/config.txt and kernel parameters"
         echo "   3. Use a different NixOS image known to have serial console working"
         echo "   4. Check if SSH is accessible (may indicate system is running without serial)"
+        echo "   5. If only CPU resets occur, the bootloader may not be found/executed"
+        echo "   6. Try different machine types (virt vs raspi4b) to isolate hardware emulation issues"
         return 1
     else
         echo ""
@@ -468,7 +509,7 @@ monitor_logs() {
     
     # Find all log files and tail them
     local log_files=()
-    for log in *serial*.log qemu*.log; do
+    for log in *serial*.log *boot*.log qemu*.log; do
         [[ -f "$log" ]] && log_files+=("$log")
     done
     
@@ -479,13 +520,75 @@ monitor_logs() {
     fi
 }
 
+# Function to analyze debug logs for boot issues
+analyze_boot() {
+    echo ""
+    echo "🔍 Analyzing boot process from debug logs..."
+    echo ""
+    
+    local debug_log=""
+    if [[ -f "raspi-boot-firmware.log" ]]; then
+        debug_log="raspi-boot-firmware.log"
+    elif [[ -f "boot-firmware.log" ]]; then
+        debug_log="boot-firmware.log"
+    elif [[ -f "qemu-raspi-debug.log" ]]; then
+        debug_log="qemu-raspi-debug.log"
+    elif [[ -f "qemu-debug.log" ]]; then
+        debug_log="qemu-debug.log"
+    fi
+    
+    if [[ -n "$debug_log" && -f "$debug_log" ]]; then
+        echo "📋 Analyzing: $debug_log"
+        
+        # Count CPU resets
+        local resets=$(grep -c "CPU Reset" "$debug_log" 2>/dev/null || echo "0")
+        echo "   CPU Resets: $resets"
+        
+        # Look for execution beyond resets
+        local exec_lines=$(grep -c "Trying to execute\|Taking exception\|IN:" "$debug_log" 2>/dev/null || echo "0")
+        echo "   Code execution attempts: $exec_lines"
+        
+        # Check for storage access
+        local storage_access=$(grep -c "sd\|mmc\|block" "$debug_log" 2>/dev/null || echo "0")
+        echo "   Storage access attempts: $storage_access"
+        
+        # Look for bootloader activity
+        local bootloader=$(grep -c -i "boot\|u-boot\|loader" "$debug_log" 2>/dev/null || echo "0")
+        echo "   Bootloader references: $bootloader"
+        
+        echo ""
+        if [[ "$exec_lines" -eq 0 && "$resets" -gt 0 ]]; then
+            echo "❌ DIAGNOSIS: System resets but never executes code"
+            echo "   This indicates the bootloader is not being found or executed."
+            echo "   Possible causes:"
+            echo "   - SD card image boot partition not recognized by QEMU"
+            echo "   - Missing or incompatible bootloader (U-Boot) in image"
+            echo "   - QEMU raspi4b boot firmware issues"
+            echo "   - Image partition table or filesystem corruption"
+        elif [[ "$exec_lines" -gt 0 ]]; then
+            echo "✅ DIAGNOSIS: Code execution detected"
+            echo "   The bootloader appears to be running. Check serial logs for output."
+        else
+            echo "⚠️  DIAGNOSIS: No clear boot process detected"
+            echo "   The debug log may need more verbose logging options."
+        fi
+        
+        echo ""
+        echo "📄 Recent debug log entries:"
+        tail -20 "$debug_log"
+    else
+        echo "❌ No debug log found (qemu-debug.log or qemu-raspi-debug.log)"
+    fi
+}
+
 # Main menu
 echo "Choose an option:"
 echo "1) Check current log files for output"
 echo "2) Monitor log files in real-time"
-echo "3) Show both options"
+echo "3) Analyze boot process from debug logs"
+echo "4) Show all analysis"
 echo ""
-read -p "Enter choice (1-3): " choice
+read -p "Enter choice (1-4): " choice
 
 case "$choice" in
     1)
@@ -495,7 +598,12 @@ case "$choice" in
         monitor_logs
         ;;
     3)
+        analyze_boot
+        ;;
+    4)
         check_logs
+        echo ""
+        analyze_boot
         echo ""
         monitor_logs
         ;;
