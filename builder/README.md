@@ -45,13 +45,15 @@ cd .. && nix build path:$PWD#images.rpi4
 
 ## How It Works
 
-The builder uses the Colima VM directly as a remote builder for Nix. This approach:
+The builder uses a Docker container running inside the Colima VM as a remote builder for Nix. This approach:
 
-- Avoids complex cross-compilation issues  
-- Uses the Colima VM natively without nested containers
+- Uses a pre-built NixOS container image with Nix already installed
+- Avoids the need to install Nix manually on each setup  
 - Provides native aarch64-linux builds instead of cross-compilation
 - Works reliably on Apple Silicon Macs
 - Maintains compatibility with the original flake structure
+
+The setup creates a Docker container with SSH access that Nix can use as a remote builder target.
 
 ## Scripts
 
@@ -105,12 +107,16 @@ colima start --arch aarch64 --cpu 4 --memory 8 --disk 40
 If automatic cleanup doesn't work, manually clean up:
 
 ```bash
+# Stop and remove Docker container
+docker stop nix-remote-builder
+docker rm nix-remote-builder
+
 # Stop and delete Colima
 colima stop
 colima delete --force colima
 
 # Remove Nix remote builder config (adjust grep pattern if needed)
-grep -v "ssh://.*aarch64-linux" ~/.config/nix/nix.conf > ~/.config/nix/nix.conf.tmp
+grep -v "ssh://root@localhost:2222" ~/.config/nix/nix.conf > ~/.config/nix/nix.conf.tmp
 mv ~/.config/nix/nix.conf.tmp ~/.config/nix/nix.conf
 ```
 

@@ -9,6 +9,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTAINER_NAME="nix-remote-builder"
 
 # Colors for output
 RED='\033[0;31m'
@@ -38,6 +39,7 @@ echo "============================="
 echo ""
 
 log_info "This script will clean up all remote builder resources:"
+log_info "- Stop and remove the Docker container"
 log_info "- Stop and delete the Colima VM"
 log_info "- Remove Nix remote builder configuration"
 echo ""
@@ -50,6 +52,22 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 
 echo ""
+
+# Stop and remove Docker container
+log_info "Cleaning up Docker container..."
+if docker ps | grep -q "$CONTAINER_NAME"; then
+    log_info "Stopping Docker container..."
+    docker stop "$CONTAINER_NAME"
+    log_success "Stopped Docker container"
+fi
+
+if docker ps -a | grep -q "$CONTAINER_NAME"; then
+    log_info "Removing Docker container..."
+    docker rm "$CONTAINER_NAME"
+    log_success "Removed Docker container"
+else
+    log_info "No Docker container found"
+fi
 
 # Stop and delete Colima
 log_info "Cleaning up Colima..."

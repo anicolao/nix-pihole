@@ -4,6 +4,8 @@ set -euo pipefail
 # Test script to validate remote builder setup and functionality
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTAINER_NAME="nix-remote-builder"
+SSH_KEY_PATH="$HOME/.ssh/nix-remote-builder"
 
 # Colors for output
 RED='\033[0;31m'
@@ -69,12 +71,24 @@ test_colima_status() {
     fi
 }
 
+test_docker_container() {
+    log_info "Testing Docker container status..."
+    
+    if docker ps | grep -q "$CONTAINER_NAME"; then
+        log_success "Docker container is running"
+        return 0
+    else
+        log_warning "Docker container is not running"
+        return 1
+    fi
+}
+
 test_remote_builder_config() {
     log_info "Testing remote builder configuration..."
     
     local nix_conf="$HOME/.config/nix/nix.conf"
     
-    if [[ -f "$nix_conf" ]] && grep -q "ssh://.*aarch64-linux" "$nix_conf"; then
+    if [[ -f "$nix_conf" ]] && grep -q "ssh://root@localhost:2222" "$nix_conf"; then
         log_success "Remote builder is configured in nix.conf"
         return 0
     else
@@ -83,26 +97,31 @@ test_remote_builder_config() {
     fi
 }
 
-test_nix_in_colima() {
-    log_info "Testing Nix installation in Colima..."
+test_container_ssh_connection() {
+    log_info "Testing SSH connection to container..."
     
-    if colima ssh -- 'source /etc/profile && nix --version' &> /dev/null; then
-        log_success "Nix is installed and working in Colima"
+    if [[ ! -f "$SSH_KEY_PATH" ]]; then
+        log_warning "SSH key not found at $SSH_KEY_PATH"
+        return 1
+    fi
+    
+    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@localhost -p 2222 'echo "SSH test successful"' &> /dev/null; then
+        log_success "SSH connection to container is working"
         return 0
     else
-        log_warning "Nix is not working in Colima"
+        log_warning "SSH connection to container failed"
         return 1
     fi
 }
 
-test_colima_ssh_connection() {
-    log_info "Testing SSH connection to Colima..."
+test_nix_in_container() {
+    log_info "Testing Nix installation in container..."
     
-    if colima ssh -- 'echo "SSH test successful"' &> /dev/null; then
-        log_success "SSH connection to Colima is working"
+    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@localhost -p 2222 'nix --version' &> /dev/null; then
+        log_success "Nix is installed and working in container"
         return 0
     else
-        log_warning "SSH connection to Colima failed"
+        log_warning "Nix is not working in container"
         return 1
     fi
 }
@@ -140,6 +159,13 @@ run_all_tests() {
     fi
     echo ""
     
+    # Test Docker container
+    total_tests=$((total_tests + 1))
+    if test_docker_container; then
+        passed_tests=$((passed_tests + 1))
+    fi
+    echo ""
+    
     # Test remote builder config
     total_tests=$((total_tests + 1))
     if test_remote_builder_config; then
@@ -147,16 +173,16 @@ run_all_tests() {
     fi
     echo ""
     
-    # Test Nix in Colima
+    # Test container SSH connection
     total_tests=$((total_tests + 1))
-    if test_nix_in_colima; then
+    if test_container_ssh_connection; then
         passed_tests=$((passed_tests + 1))
     fi
     echo ""
     
-    # Test Colima SSH connection
+    # Test Nix in container
     total_tests=$((total_tests + 1))
-    if test_colima_ssh_connection; then
+    if test_nix_in_container; then
         passed_tests=$((passed_tests + 1))
     fi
     echo ""
