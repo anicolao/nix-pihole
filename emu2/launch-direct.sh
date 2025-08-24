@@ -2,7 +2,7 @@
 set -e # Exit immediately if a command fails
 
 # --- Configuration for Direct Boot Raspberry Pi 4 Emulation ---
-MACHINE_TYPE="raspi4b"
+MACHINE_TYPE="raspi3b"
 CPU_TYPE="cortex-a72" 
 MEMORY="2G"
 SMP_CORES="4"
@@ -28,10 +28,11 @@ OPTIONS:
     --cores N       Set number of CPU cores (default: 4)
     --dry-run       Show the QEMU command without executing it
     --verbose       Enable verbose QEMU output
-    --machine TYPE  QEMU machine type (raspi4b|virt|test) (default: raspi4b)
-                    raspi4b: Raspberry Pi 4 hardware emulation (most accurate)
+    --machine TYPE  QEMU machine type (raspi3b|virt|test|uefi) (default: raspi3b)
+                    raspi3b: Raspberry Pi 3B hardware emulation (closest to Pi4, most compatible)
                     virt: Generic ARM virtualization platform (better console support)
                     test: Minimal test configuration for console debugging
+                    uefi: UEFI-enabled ARM virt machine for modern Pi4 UEFI images
     --console MODE  Serial console mode for nographic (mux|telnet|none|debug|inspect|firmware) (default: mux)
                     mux: multiplexed console (Ctrl-A c to switch monitor/serial)
                     telnet: serial via telnet on port 4444  
@@ -40,9 +41,11 @@ OPTIONS:
                     inspect: comprehensive analysis mode - logs everything + shows system state
                     firmware: focused boot diagnostics with minimal logging (avoids infinite logs)
                     NOTE: Console mapping depends on machine type and image configuration
+                    UEFI SUPPORT: Use --machine uefi for modern Pi4 UEFI images
 
 EXAMPLES:
     $0 nixos-sd-image-rpi4.img
+    $0 --machine uefi --console none nixos-sd-image-rpi4.img
     $0 --machine virt --console none nixos-sd-image-rpi4.img
     $0 --console debug nixos-sd-image-rpi4.img
     $0 --machine test --console inspect nixos-sd-image-rpi4.img
@@ -52,19 +55,32 @@ EXAMPLES:
     $0 --dry-run nixos-sd-image-rpi4.img
 
 MACHINE TYPE NOTES:
-    raspi4b: Accurate Pi4 hardware emulation, but serial console can be tricky
-    virt: Generic ARM platform with better QEMU serial support, good for debugging
+    raspi3b: Closest Pi hardware emulation available (Pi4 not supported in this QEMU version)
+    virt: Generic ARM platform with better QEMU serial support, good for debugging  
     test: Uses virt machine with minimal config for console troubleshooting
+    uefi: UEFI-enabled virt machine for modern Pi4 UEFI images (recommended for NixOS Pi4 images)
+
+UEFI vs TRADITIONAL BOOT:
+    Modern Raspberry Pi 4 NixOS images often use UEFI firmware instead of traditional bootloader.
+    If you see infinite CPU resets with raspi3b machine, try:
+    --machine uefi (for UEFI images) or --machine virt (for better compatibility)
 
 CONSOLE TROUBLESHOOTING:
     If you see no console output with any machine or console mode:
-    1. Try: --machine test --console inspect (minimal test config with analysis)
-    2. Try: --console firmware (focused boot diagnostics)
-    3. Check if your NixOS image has these kernel parameters: console=ttyAMA0,115200 console=ttyS0,115200
-    4. Verify the image boots by checking CPU/memory usage in another terminal
-    5. The image may not have serial console enabled - check systemd getty configuration
-    6. Run ./troubleshoot-console.sh (created in inspect mode) to analyze log files
-    7. If only CPU resets occur in debug logs: bootloader/firmware issue, not console config
+    1. Try: --machine uefi --console none (for modern Pi4 UEFI images)
+    2. Try: --machine test --console inspect (minimal test config with analysis)
+    3. Try: --console firmware (focused boot diagnostics)
+    4. Check if your NixOS image has these kernel parameters: console=ttyAMA0,115200 console=ttyS0,115200
+    5. Verify the image boots by checking CPU/memory usage in another terminal
+    6. The image may not have serial console enabled - check systemd getty configuration
+    7. Run ./troubleshoot-console.sh (created in inspect mode) to analyze log files
+    8. If only CPU resets occur in debug logs: bootloader/firmware issue, try UEFI mode
+
+INFINITE RESET LOOP DIAGNOSIS:
+    If you see continuous CPU resets without code execution:
+    • Modern Pi4 images use UEFI - try --machine uefi
+    • QEMU raspi3b may not support your image's boot firmware  
+    • raspi4b machine type doesn't exist in QEMU 8.2.2 - use raspi3b, virt, or uefi instead
 
 This script boots the image just like real hardware would:
 1. QEMU emulates the specified hardware platform  
@@ -151,16 +167,16 @@ while [[ $# -gt 0 ]]; do
             ;;
         --machine)
             MACHINE_TYPE="$2"
-            if [[ "$MACHINE_TYPE" != "raspi4b" && "$MACHINE_TYPE" != "virt" && "$MACHINE_TYPE" != "test" ]]; then
+            if [[ "$MACHINE_TYPE" != "raspi3b" && "$MACHINE_TYPE" != "virt" && "$MACHINE_TYPE" != "test" && "$MACHINE_TYPE" != "uefi" ]]; then
                 echo "❌ Invalid machine type: $MACHINE_TYPE"
-                echo "   Valid types: raspi4b, virt, test"
+                echo "   Valid types: raspi3b, virt, test, uefi"
                 exit 1
             fi
             # Adjust CPU type for different machines
-            if [[ "$MACHINE_TYPE" == "virt" ]]; then
+            if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "uefi" ]]; then
                 CPU_TYPE="cortex-a57"  # Better supported on virt machine
             elif [[ "$MACHINE_TYPE" == "test" ]]; then
-                CPU_TYPE="cortex-a57"  # Use reliable CPU for testing
+                CPU_TYPE="cortex-a57"  # Use virt-compatible CPU for test mode
             fi
             shift 2
             ;;
@@ -239,6 +255,22 @@ QEMU_CMD=(
 if [[ "$MACHINE_TYPE" == "virt" ]]; then
     # For virt machine, use virtio block device
     QEMU_CMD+=(-drive "if=virtio,format=raw,file=$DISK_IMAGE")
+elif [[ "$MACHINE_TYPE" == "uefi" ]]; then
+    # For UEFI machine, use virt with UEFI firmware and virtio storage
+    MACHINE_TYPE="virt"  # Override to use virt for UEFI
+    QEMU_CMD[1]="-machine"  # Update the machine parameter
+    QEMU_CMD[2]="virt"      # Set to virt
+    # Add UEFI firmware support with fallback
+    if [[ -f "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd" ]]; then
+        QEMU_CMD+=(-bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd)
+    elif [[ -f "/usr/share/qemu/AAVMF_CODE.fd" ]]; then
+        QEMU_CMD+=(-bios /usr/share/qemu/AAVMF_CODE.fd)
+    else
+        echo "⚠️  UEFI firmware not found, falling back to standard virt machine"
+        echo "   Install qemu-efi-aarch64 package for UEFI support"
+    fi
+    # Use virtio block device for UEFI
+    QEMU_CMD+=(-drive "if=virtio,format=raw,file=$DISK_IMAGE")
 elif [[ "$MACHINE_TYPE" == "test" ]]; then
     # For test machine, use virt with minimal config
     MACHINE_TYPE="virt"  # Override to use virt for testing
@@ -246,7 +278,7 @@ elif [[ "$MACHINE_TYPE" == "test" ]]; then
     QEMU_CMD[2]="virt"      # Set to virt
     QEMU_CMD+=(-drive "if=virtio,format=raw,file=$DISK_IMAGE")
 else
-    # For raspi4b, use SD card interface
+    # For raspi3b, use SD card interface
     QEMU_CMD+=(-drive "if=sd,format=raw,file=$DISK_IMAGE")
 fi
 
@@ -260,7 +292,7 @@ if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
     # Use virtio-net for virt machine (more reliable)
     QEMU_CMD+=(-device "virtio-net,netdev=net0")
 else
-    # Use USB network for raspi4b (Pi4 compatible)
+    # Use USB network for raspi3b (Pi compatible)
     QEMU_CMD+=(-device "usb-net,netdev=net0")
 fi
 
@@ -313,29 +345,29 @@ else
                 ;;
         esac
     else
-        # raspi4b machine type - handle Raspberry Pi specific serial mapping
+        # raspi3b machine type - handle Raspberry Pi specific serial mapping
         case "$CONSOLE_MODE" in
             "mux")
-                # For Pi4: disable PL011 (ttyAMA0), use mini UART (ttyS0) with mux
+                # For Pi3: disable PL011 (ttyAMA0), use mini UART (ttyS0) with mux
                 QEMU_CMD+=(-nographic -serial null -serial mon:stdio)
                 ;;
             "telnet")
-                # For Pi4: disable PL011, map mini UART to telnet
+                # For Pi3: disable PL011, map mini UART to telnet
                 QEMU_CMD+=(-nographic -serial null -serial telnet:localhost:4444,server,nowait)
                 ;;
             "none")
-                # For Pi4: disable PL011, map mini UART to stdio
+                # For Pi3: disable PL011, map mini UART to stdio
                 QEMU_CMD+=(-nographic -monitor none -serial null -serial stdio)
                 ;;
             "debug")
-                # For Pi4: log all possible serial devices for analysis
+                # For Pi3: log all possible serial devices for analysis
                 QEMU_CMD+=(-nographic -monitor none)
                 for i in {1..5}; do
                     QEMU_CMD+=(-serial "file:raspi-serial-${i}.log")
                 done
                 ;;
             "inspect")
-                # Comprehensive analysis mode for Pi4
+                # Comprehensive analysis mode for Pi3
                 QEMU_CMD+=(-nographic -monitor stdio)
                 # Log all serial devices with different routing attempts
                 QEMU_CMD+=(-serial "file:raspi-serial-1.log")  # PL011 UART (ttyAMA0)
@@ -347,7 +379,7 @@ else
                 QEMU_CMD+=(-d guest_errors,unimp,cpu_reset,int,exec,in_asm,op_opt -D qemu-raspi-debug.log)
                 ;;
             "firmware")
-                # Focus on boot firmware diagnostics for Pi4
+                # Focus on boot firmware diagnostics for Pi3
                 QEMU_CMD+=(-nographic -monitor stdio)
                 # Single serial log for boot analysis
                 QEMU_CMD+=(-serial "file:raspi-boot-console.log")
@@ -378,6 +410,9 @@ else
             "mux")
                 if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
                     echo "   Press Ctrl-A c to switch between QEMU monitor and serial console"
+                elif [[ "$MACHINE_TYPE" == "uefi" ]]; then
+                    echo "   UEFI mode - serial console should appear directly"
+                    echo "   Press Ctrl-A c to switch between QEMU monitor and serial console"
                 else
                     echo "   Press Ctrl-A c to switch between QEMU monitor and serial console (ttyS0)"
                 fi
@@ -386,6 +421,8 @@ else
             "telnet")
                 if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
                     echo "   Connect to serial console with: telnet localhost 4444"
+                elif [[ "$MACHINE_TYPE" == "uefi" ]]; then
+                    echo "   UEFI mode - Connect to serial console with: telnet localhost 4444"
                 else
                     echo "   Connect to serial console (ttyS0) with: telnet localhost 4444"
                 fi
@@ -394,6 +431,8 @@ else
             "none")
                 if [[ "$MACHINE_TYPE" == "virt" || "$MACHINE_TYPE" == "test" ]]; then
                     echo "   Serial console output should appear directly"
+                elif [[ "$MACHINE_TYPE" == "uefi" ]]; then
+                    echo "   UEFI mode - Serial console output should appear directly"
                 else
                     echo "   Serial console (ttyS0) output should appear directly"
                 fi
@@ -433,7 +472,7 @@ else
                     echo "   - Console log: boot-console.log"
                     echo "   - Firmware debug: boot-firmware.log"
                 else
-                    echo "   Pi4 boot firmware analysis mode:"
+                    echo "   Pi3 boot firmware analysis mode:"
                     echo "   - Console log: raspi-boot-console.log"
                     echo "   - Firmware debug: raspi-boot-firmware.log"
                 fi
@@ -474,10 +513,11 @@ check_logs() {
         echo ""
         echo "❌ No serial output found in any log file."
         echo "This suggests one of these issues:"
-        echo "   1. NixOS image lacks serial console configuration"
-        echo "   2. Bootloader (U-Boot) not configured for serial output"
-        echo "   3. Kernel parameters missing console= directives"
-        echo "   4. systemd getty not enabled for serial console"
+        echo "   1. Modern Pi4 NixOS images may use UEFI - try --machine uefi"
+        echo "   2. NixOS image lacks serial console configuration"
+        echo "   3. Bootloader (U-Boot) not configured for serial output"
+        echo "   4. Kernel parameters missing console= directives"
+        echo "   5. systemd getty not enabled for serial console"
         echo ""
         echo "🔍 CRITICAL: Check qemu-debug.log or qemu-raspi-debug.log for boot analysis:"
         echo "   - If only CPU resets shown: Boot process not starting"
@@ -577,24 +617,25 @@ analyze_boot() {
             echo "   This indicates a fundamental boot firmware issue:"
             echo ""
             echo "   PROBABLE CAUSES:"
-            echo "   1. QEMU raspi4b firmware cannot find bootloader on SD card image"
-            echo "   2. SD card image format incompatible with QEMU's raspi4b boot firmware"
-            echo "   3. Missing or corrupted boot partition in the image"
-            echo "   4. NixOS image not designed for QEMU Raspberry Pi 4 emulation"
+            echo "   1. Modern Pi4 NixOS images use UEFI firmware instead of traditional bootloader"
+            echo "   2. QEMU raspi3b firmware cannot boot UEFI-based Pi4 images"
+            echo "   3. SD card image format incompatible with QEMU's raspi3b boot firmware"
+            echo "   4. Missing or corrupted boot partition in the image"
             echo ""
             echo "   RECOMMENDED SOLUTIONS:"
-            echo "   1. Try a different machine type: --machine virt --console firmware"
-            echo "   2. Use a standard Raspberry Pi OS image to test QEMU setup"
-            echo "   3. Check if the NixOS image has proper Pi4 boot firmware installed"
-            echo "   4. Mount the image and verify boot partition contains bootcode.bin, start.elf"
-            echo "   5. Try a different QEMU version or Raspberry Pi emulation alternative"
+            echo "   1. ⭐ Try UEFI mode: --machine uefi --console firmware"
+            echo "   2. Try generic ARM: --machine virt --console firmware"
+            echo "   3. Use a standard Raspberry Pi OS image to test QEMU setup"
+            echo "   4. Check if the NixOS image is UEFI-based (modern Pi4 images often are)"
+            echo "   5. Mount the image and verify boot partition structure"
         elif [[ "$exec_lines" -eq 0 && "$resets" -gt 0 ]]; then
             echo "❌ DIAGNOSIS: System resets but never executes code"
             echo "   This indicates the bootloader is not being found or executed."
             echo "   Possible causes:"
+            echo "   - Modern Pi4 image uses UEFI - try --machine uefi"
             echo "   - SD card image boot partition not recognized by QEMU"
             echo "   - Missing or incompatible bootloader (U-Boot) in image"
-            echo "   - QEMU raspi4b boot firmware issues"
+            echo "   - QEMU raspi3b boot firmware limitations"
             echo "   - Image partition table or filesystem corruption"
         elif [[ "$exec_lines" -gt 0 ]]; then
             echo "✅ DIAGNOSIS: Code execution detected"
