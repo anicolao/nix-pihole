@@ -19,6 +19,9 @@
       pkgs = import nixpkgs {
         system = hostSystem;
         crossSystem = nixpkgs.lib.systems.examples.aarch64-multiplatform;
+        config = {
+          allowUnfree = true;
+        };
       };
     in nixpkgs.lib.nixosSystem {
       inherit pkgs;

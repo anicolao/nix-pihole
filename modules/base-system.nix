@@ -62,9 +62,6 @@ with lib;
   };
 
   config = mkIf config.pihole.baseSystem.enable {
-    # Allow unfree packages
-    nixpkgs.config.allowUnfree = true;
-    
     # System locale and timezone
     time.timeZone = config.pihole.baseSystem.timeZone;
     i18n.defaultLocale = config.pihole.baseSystem.locale;
