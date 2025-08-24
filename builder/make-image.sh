@@ -2,8 +2,14 @@
 #
 # make-image.sh - Build RPi4 image using Colima remote builder
 #
-# This script automatically sets up a Colima-based remote builder and builds
-# the Pi-hole RPi4 image for cross-compilation from macOS to aarch64-linux.
+# This script automatically sets up a Colima-based remote builder using a
+# pre-built Docker image and builds the Pi-hole RPi4 image for cross-compilation 
+# from macOS to aarch64-linux.
+#
+# The remote builder uses a Docker image built with Nix that includes:
+# - NixOS environment with SSH server pre-configured
+# - All required system users and directories set up
+# - Nix package manager ready for remote building
 #
 
 set -euo pipefail

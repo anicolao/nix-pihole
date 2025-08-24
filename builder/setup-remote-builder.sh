@@ -139,8 +139,38 @@ start_colima() {
     fi
 }
 
+ensure_docker_image() {
+    log_info "Ensuring Nix remote builder Docker image is available..."
+    
+    # Check if the image already exists
+    if docker images nix-remote-builder:latest --format "table {{.Repository}}:{{.Tag}}" | grep -q "nix-remote-builder:latest"; then
+        log_info "Docker image 'nix-remote-builder:latest' already exists"
+        return 0
+    fi
+    
+    log_info "Docker image not found. Building it now..."
+    log_info "This may take several minutes on first run..."
+    
+    # Build the image using the container build script
+    if [[ -f "$SCRIPT_DIR/container/build-image.sh" ]]; then
+        if "$SCRIPT_DIR/container/build-image.sh"; then
+            log_success "Docker image built successfully"
+        else
+            log_error "Failed to build Docker image"
+            exit 1
+        fi
+    else
+        log_error "Docker image build script not found at $SCRIPT_DIR/container/build-image.sh"
+        log_info "Please ensure the container build scripts are available"
+        exit 1
+    fi
+}
+
 setup_nix_container() {
-    log_info "Setting up Nix container with pre-installed Nix..."
+    log_info "Setting up Nix container using pre-built Docker image..."
+    
+    # Ensure the Docker image is available
+    ensure_docker_image
     
     # Remove existing container if it exists to ensure clean state
     if docker ps -a --format 'table {{.Names}}' | grep -q "^$CONTAINER_NAME$"; then
@@ -148,82 +178,42 @@ setup_nix_container() {
         docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     fi
     
-    log_info "Creating new container with Nix pre-installed..."
+    log_info "Creating new container from pre-built image..."
     
-    # Use nixos/nix image which has Nix pre-installed on Alpine Linux base
-    # Alpine has standard package management (apk) that should work reliably for SSH
+    # Use our pre-built Docker image with SSH and Nix already configured
     docker run -d \
         --name "$CONTAINER_NAME" \
         --platform linux/aarch64 \
         -p 2222:22 \
-        nixos/nix:latest \
-        tail -f /dev/null
+        nix-remote-builder:latest
     
-    # Give the container time to start up
+    # Give the container time to start up and initialize SSH
     log_info "Waiting for container initialization..."
-    sleep 5
-    
-    # Install SSH using Alpine package manager (much more reliable than manual setup)
-    log_info "Installing SSH server using Alpine package manager..."
-    docker exec "$CONTAINER_NAME" sh -c '
-        # Update package index and install OpenSSH and network tools
-        apk update
-        apk add openssh openssh-server netstat-nat
-        
-        # Generate SSH host keys
-        ssh-keygen -A
-        
-        # Create SSH run directory
-        mkdir -p /var/run/sshd
-        
-        # Configure SSH for remote access
-        sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin yes/" /etc/ssh/sshd_config
-        sed -i "s/#PubkeyAuthentication yes/PubkeyAuthentication yes/" /etc/ssh/sshd_config
-        sed -i "s/#PasswordAuthentication yes/PasswordAuthentication no/" /etc/ssh/sshd_config
-        
-        # Set root password (for emergency access, though we use keys)
-        echo "root:password" | chpasswd
-        
-        # Start SSH daemon
-        /usr/sbin/sshd
-        
-        # Verify SSH is running
-        ps aux | grep sshd
-    '
+    sleep 10
     
     # Add SSH key to the container
     log_info "Adding SSH public key to container..."
-    docker exec "$CONTAINER_NAME" mkdir -p /root/.ssh
     docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
     docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
     docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
     
-    # Verify Nix is available and working
-    log_info "Verifying Nix installation..."
-    docker exec "$CONTAINER_NAME" nix --version
-    
-    # Configure Nix for remote building
-    log_info "Configuring Nix for remote building..."
+    # Verify the container is ready
+    log_info "Verifying container setup..."
     docker exec "$CONTAINER_NAME" sh -c '
-        mkdir -p /root/.config/nix
-        cat > /root/.config/nix/nix.conf << EOF
-experimental-features = nix-command flakes
-trusted-users = root
-sandbox = false
-EOF
-    '
-    
-    # Test SSH connectivity from inside container
-    log_info "Testing SSH daemon accessibility..."
-    docker exec "$CONTAINER_NAME" sh -c '
-        # Test that SSH is listening on port 22
+        echo "=== Container Status ==="
+        ps aux | grep -E "(sshd|nix)" || echo "No SSH or Nix processes found"
+        
+        echo "=== Network Status ==="
         netstat -tlnp | grep :22 || echo "SSH not listening on port 22"
         
-        # Test SSH daemon configuration
-        /usr/sbin/sshd -T || echo "SSH configuration test failed"
+        echo "=== Nix Verification ==="
+        nix --version || echo "Nix not available"
+        
+        echo "=== SSH Config Test ==="
+        /bin/sshd -T || echo "SSH configuration test failed"
     '
     
-    log_success "Container with pre-installed Nix and SSH service is ready"
+    log_success "Container with pre-configured Nix and SSH service is ready"
 }
 
 wait_for_container_ready() {
@@ -286,23 +276,17 @@ configure_nix_remote_builder() {
         echo "builders-use-substitutes = true" >> "$NIX_CONF_FILE"
     fi
     
-    # Test the connection
+    # Test the connection - simpler approach since Nix is pre-configured in our image
     log_info "Testing remote builder connection..."
-    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'source /root/.nix-profile/etc/profile.d/nix.sh && nix --version' &> /dev/null; then
+    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'nix --version' &> /dev/null; then
         log_success "Remote builder connection successful"
     else
         log_error "Failed to connect to remote builder"
         log_info "Debug: Testing basic SSH connection..."
         if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'echo "SSH works"'; then
             log_info "SSH connection works, checking Nix installation..."
-            if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'ls -la /root/.nix-profile/'; then
-                log_info "Nix profile exists, trying with explicit sourcing..."
-                ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'source /root/.nix-profile/etc/profile.d/nix.sh && nix --version'
-            else
-                log_error "Nix installation might have failed"
-                log_info "Checking if Nix installer completed successfully..."
-                ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'ls -la /nix/ /root/'
-            fi
+            log_info "Trying Nix command with full path..."
+            ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 '/nix/var/nix/profiles/default/bin/nix --version || /root/.nix-profile/bin/nix --version || which nix'
         else
             log_error "Basic SSH connection failed"
         fi

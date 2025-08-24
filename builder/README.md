@@ -20,34 +20,50 @@ nix develop ./builder -c ./builder/make-image.sh
 
 ## How It Works
 
-The builder solution uses a simplified approach that leverages existing Docker images:
+The builder solution uses a **pre-built Docker image approach** for maximum reliability:
 
-**Alpine Linux + Nix Image** - Uses the official `nixos/nix:latest` Docker image which provides:
-- Pre-installed Nix package manager on Alpine Linux base
-- Standard Alpine package management (apk) for reliable SSH server installation  
-- Eliminates complex Nix installation and privilege separation issues
-- Uses declarative Alpine package management instead of manual SSH configuration
+**Nix-built Docker Image** - Uses a Docker image built with Nix that includes:
+- NixOS environment with SSH server pre-configured
+- All required system users (including `sshd` user for privilege separation)
+- Proper directory structure (`/var/empty`, `/var/run/sshd`, etc.)
+- Nix package manager with optimized configuration for remote building
+- SSH server configured and ready to accept connections
 
-This approach avoids the previous complexity of:
-- Installing Nix from scratch in containers (which often failed due to network or dependency issues)
-- Manual SSH daemon configuration with privilege separation setup
-- Complex systemd-based container setups that caused "failed to create task" errors
+This approach eliminates the previous complexity of:
+- Runtime SSH server installation and configuration
+- Manual creation of system users and directories
+- Complex privilege separation setup
+- Network connectivity issues during package installation
+- Container startup failures due to systemd or init issues
 
 ### Technical Details
 
 The setup process:
-1. Uses `nixos/nix:latest` image with Nix already installed on Alpine Linux
-2. Installs SSH server via Alpine's `apk` package manager (much more reliable than manual setup)
-3. Configures SSH using standard configuration files and Alpine's service management
-4. Sets up SSH keys for remote access
-5. Configures Nix for remote building with proper settings
+1. **Pre-built Image**: Uses a Docker image built with Nix containing everything pre-configured
+2. **Container Creation**: Simple `docker run` with the pre-built image
+3. **SSH Key Setup**: Copies SSH public key to the running container
+4. **Remote Builder**: Configures Nix to use the container as a remote builder
+
+## Architecture
+
+```
+Host (macOS)          Container (aarch64-linux)
+├── Nix (client)  ->  ├── Nix (builder)
+├── SSH client    ->  ├── SSH server (pre-configured)
+└── Docker        ->  └── Pre-built image with everything ready
+```
 
 ## Files
 
 - `flake.nix` - Nix development environment with required dependencies (colima, docker, etc.)
 - `make-image.sh` - Main entry point script for building the RPi4 image
-- `setup-remote-builder.sh` - Sets up the remote builder (called by make-image.sh)
+- `setup-remote-builder.sh` - Sets up the remote builder using pre-built Docker image
 - `test-remote-builder.sh` - Tests the remote builder functionality
+- `cleanup.sh` - Cleans up Colima and Docker containers
+- `container/` - **NEW**: Directory containing Nix configuration to build the Docker image
+  - `container/flake.nix` - Nix configuration for building the Docker image
+  - `container/build-image.sh` - Script to build and load the Docker image
+  - `container/README.md` - Documentation for the container build process
 - `cleanup.sh` - Cleans up Docker containers and Colima instances
 - `remote-builder-config.nix` - NixOS configuration for the remote builder container
 - `remote-builder-flake.nix` - Flake for building the NixOS Docker image
