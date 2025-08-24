@@ -41,8 +41,8 @@
     nixosConfigurations.rpi4 = mkRpi4Image "aarch64-linux";
 
     # Make the image available directly at top level for cross-compilation
-    # Use the current system for cross-compilation
-    images.rpi4 = (mkRpi4Image builtins.currentSystem).config.system.build.sdImage;
+    # The image is the same regardless of host system (always aarch64-linux target)
+    images.rpi4 = (mkRpi4Image "aarch64-linux").config.system.build.sdImage;
 
     packages = forAllSystems (system: {
       # Provide the image as a package for easy building
