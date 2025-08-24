@@ -41,8 +41,10 @@ This repository contains a complete NixOS configuration that transforms a Raspbe
 ## Prerequisites
 
 - **Hardware**: Raspberry Pi 4 with microSD card (8GB+ recommended)
-- **Software**: NixOS system with flakes enabled
-- **Network**: WiFi credentials or ethernet connection
+- **Software**: Nix package manager with flakes enabled (works on Linux, macOS, and other platforms)
+- **Network**: WiFi credentials or ethernet connection for the Pi
+
+**Note**: Thanks to cross-compilation support, you can build Raspberry Pi images from any platform that supports Nix, including macOS and x86_64 Linux systems.
 
 ## Quick Start
 
@@ -73,15 +75,23 @@ nano personal/alex_users.nix  # Modify usernames and settings as needed
 
 ### 2. Building an SD Card Image
 
-To create a bootable SD card image for your Raspberry Pi 4:
+To create a bootable SD card image for your Raspberry Pi 4. Thanks to cross-compilation support, you can build the ARM64 image from any supported platform including Linux, macOS (Intel and Apple Silicon), and other architectures:
 
 ```bash
-# Build the SD card image
+# Build the SD card image (works on any supported platform)
 nix build path:$PWD#images.rpi4
 
 # Flash the image to your SD card
 sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
 ```
+
+**Cross-Platform Support**: The build system supports cross-compilation from:
+- x86_64-linux (Intel/AMD Linux)
+- aarch64-linux (ARM64 Linux) 
+- x86_64-darwin (Intel Mac)
+- aarch64-darwin (Apple Silicon Mac)
+
+This means you can build Raspberry Pi images directly from your macOS development machine or any other supported platform without needing ARM64 hardware.
 
 ### 3. Initial Setup
 
@@ -201,6 +211,20 @@ pihole.service.interface = "eth0";  # For Raspberry Pi ethernet
 
 ## Building and Testing
 
+### Cross-Platform Development
+
+The flake configuration supports building on multiple platforms:
+
+```bash
+# Build on any supported platform (Linux, macOS Intel/Apple Silicon)
+nix build path:$PWD#images.rpi4
+
+# Alternative package-based build
+nix build .#packages.x86_64-linux.rpi4-image    # From x86_64 Linux  
+nix build .#packages.aarch64-darwin.rpi4-image  # From Apple Silicon Mac
+nix build .#packages.x86_64-darwin.rpi4-image   # From Intel Mac
+```
+
 ### Local Development
 
 ```bash
@@ -210,7 +234,7 @@ nix flake check
 # Build the system configuration
 nix build .#nixosConfigurations.rpi4.config.system.build.toplevel
 
-# Build just the SD image
+# Build just the SD image (cross-platform)
 nix build path:$PWD#images.rpi4
 ```
 
