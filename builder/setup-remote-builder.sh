@@ -149,19 +149,46 @@ setup_nix_in_colima() {
     log_info "Installing Nix in Colima VM..."
     log_info "This may take a few minutes..."
     
-    # Install Nix in the Colima VM
-    if colima ssh -- 'curl -L https://nixos.org/nix/install | sh -s -- --daemon --yes'; then
-        log_success "Nix installed successfully in Colima"
+    # Download the Nix installer first to check network connectivity
+    log_info "Downloading Nix installer..."
+    if ! colima ssh -- 'curl -f -L --connect-timeout 30 --max-time 300 -o /tmp/nix-install.sh https://nixos.org/nix/install'; then
+        log_error "Failed to download Nix installer. Check internet connectivity in Colima VM."
+        log_info "Debug: Testing basic connectivity..."
+        if colima ssh -- 'curl -f -L --connect-timeout 10 --max-time 30 -o /dev/null https://httpbin.org/status/200'; then
+            log_info "Basic internet connectivity works, but nixos.org might be blocked"
+        else
+            log_error "No internet connectivity in Colima VM"
+        fi
+        return 1
+    fi
+    
+    log_success "Nix installer downloaded successfully"
+    
+    # Make the installer executable and run it
+    log_info "Running Nix installer with daemon mode..."
+    if colima ssh -- 'chmod +x /tmp/nix-install.sh && /tmp/nix-install.sh --daemon --yes'; then
+        log_success "Nix installation completed"
         
-        # Verify Nix is working
-        if colima ssh -- 'source /etc/profile && nix --version' &>/dev/null; then
+        # Clean up installer
+        colima ssh -- 'rm -f /tmp/nix-install.sh' || true
+        
+        # Verify Nix is working - try multiple approaches to source the environment
+        log_info "Verifying Nix installation..."
+        if colima ssh -- 'source /etc/profile && nix --version'; then
             log_success "Nix is working correctly"
+        elif colima ssh -- '. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && nix --version'; then
+            log_success "Nix is working correctly (alternative profile)"
         else
             log_error "Nix installation verification failed"
+            log_info "Debug: Checking what got installed..."
+            colima ssh -- 'ls -la /nix/ || echo "No /nix directory"'
+            colima ssh -- 'cat /etc/profile | grep -i nix || echo "No nix in /etc/profile"'
             return 1
         fi
     else
         log_error "Failed to install Nix in Colima"
+        log_info "Debug: Checking installer output..."
+        colima ssh -- 'ls -la /tmp/nix-install.sh || echo "Installer not found"'
         return 1
     fi
 }
@@ -203,12 +230,24 @@ configure_nix_remote_builder() {
         echo "builders-use-substitutes = true" >> "$NIX_CONF_FILE"
     fi
     
-    # Test the connection
+    # Test the connection with better error handling
     log_info "Testing remote builder connection..."
-    if colima ssh -- 'source /etc/profile && nix --version' &> /dev/null; then
+    if colima ssh -- 'source /etc/profile && nix --version' 2>/dev/null; then
         log_success "Remote builder connection successful"
+    elif colima ssh -- '. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh && nix --version' 2>/dev/null; then
+        log_success "Remote builder connection successful (alternative profile)"
     else
         log_error "Failed to connect to remote builder"
+        log_info "Debug: Testing basic SSH connection..."
+        if colima ssh -- 'echo "SSH works"'; then
+            log_info "SSH connection works, but Nix environment is not properly set up"
+            log_info "Debug: Checking Nix installation..."
+            colima ssh -- 'ls -la /nix/ 2>/dev/null || echo "No /nix directory found"'
+            colima ssh -- 'command -v nix || echo "nix command not found in PATH"'
+            colima ssh -- 'echo $PATH'
+        else
+            log_error "Basic SSH connection failed"
+        fi
         return 1
     fi
     
