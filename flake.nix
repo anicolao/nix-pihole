@@ -10,43 +10,35 @@
       then ./personal/alex_users.nix 
       else ./default-users.nix;
     
-    # Support cross-compilation from multiple host systems
+    # Support building from multiple host systems via packages interface
     systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
     forAllSystems = nixpkgs.lib.genAttrs systems;
     
-    # Create the RPI4 image with proper cross-compilation support
-    mkRpi4Image = system: let
-      pkgs = import nixpkgs {
-        inherit system;
-        crossSystem = {
-          config = "aarch64-unknown-linux-gnu";
-          system = "aarch64-linux";
-        };
-        config = {
-          allowUnfree = true;
-        };
-      };
-    in nixpkgs.lib.nixosSystem {
+    # Create the RPI4 NixOS system (always aarch64-linux for Raspberry Pi)
+    rpi4System = nixpkgs.lib.nixosSystem {
       system = "aarch64-linux";
-      pkgs = pkgs;
       modules = [
         "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
         ./sdimage.nix
         userConfig
         ./configuration.nix
+        # Configure nixpkgs to allow unfree packages
+        {
+          nixpkgs.config.allowUnfree = true;
+        }
       ];
     };
   in rec {
     # For backward compatibility, provide a default rpi4 configuration
-    nixosConfigurations.rpi4 = mkRpi4Image "aarch64-linux";
+    nixosConfigurations.rpi4 = rpi4System;
 
     # Make the image available directly at top level for cross-compilation
-    # The image is the same regardless of host system (always aarch64-linux target)
-    images.rpi4 = (mkRpi4Image "aarch64-linux").config.system.build.sdImage;
+    # Nix will handle cross-compilation automatically when building from different host systems
+    images.rpi4 = rpi4System.config.system.build.sdImage;
 
+    # Provide the image as a package on all systems for cross-compilation
     packages = forAllSystems (system: {
-      # Provide the image as a package for easy building
-      rpi4-image = (mkRpi4Image system).config.system.build.sdImage;
+      rpi4-image = rpi4System.config.system.build.sdImage;
     }) // {
       aarch64-linux.nixosConfigurations."${hostname}" = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
