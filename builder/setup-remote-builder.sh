@@ -139,8 +139,8 @@ setup_nix_container() {
         -p 2222:22 \
         ubuntu:22.04 \
         sh -c '
-        # Install SSH server and curl
-        apt-get update -qq && apt-get install -y -qq openssh-server curl sudo
+        # Install SSH server, curl, and xz-utils (needed for Nix installer)
+        apt-get update -qq && apt-get install -y -qq openssh-server curl sudo xz-utils
         
         # Configure SSH properly
         mkdir -p /var/run/sshd /root/.ssh
