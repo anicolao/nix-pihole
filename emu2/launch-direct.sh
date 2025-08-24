@@ -38,7 +38,7 @@ OPTIONS:
                     none: disable monitor, serial only to stdio
                     debug: log all serial devices to files for troubleshooting
                     inspect: comprehensive analysis mode - logs everything + shows system state
-                    firmware: focus on boot firmware diagnostics with minimal logging
+                    firmware: focused boot diagnostics with minimal logging (avoids infinite logs)
                     NOTE: Console mapping depends on machine type and image configuration
 
 EXAMPLES:
@@ -308,8 +308,8 @@ else
                 QEMU_CMD+=(-nographic -monitor stdio)
                 # Minimal serial logging for boot analysis
                 QEMU_CMD+=(-serial "file:boot-console.log")
-                # Focused debugging on boot process and firmware
-                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset,exec -D boot-firmware.log)
+                # Focused debugging on boot process - minimal logging to avoid infinite logs
+                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset -D boot-firmware.log)
                 ;;
         esac
     else
@@ -351,8 +351,8 @@ else
                 QEMU_CMD+=(-nographic -monitor stdio)
                 # Single serial log for boot analysis
                 QEMU_CMD+=(-serial "file:raspi-boot-console.log")
-                # Focused debugging on boot process
-                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset,exec -D raspi-boot-firmware.log)
+                # Focused debugging on boot process - minimal logging to avoid infinite logs
+                QEMU_CMD+=(-d guest_errors,unimp,cpu_reset -D raspi-boot-firmware.log)
                 ;;
         esac
     fi
@@ -540,16 +540,30 @@ analyze_boot() {
     if [[ -n "$debug_log" && -f "$debug_log" ]]; then
         echo "📋 Analyzing: $debug_log"
         
+        # Check file size to detect infinite logging
+        local file_size=$(stat -f%z "$debug_log" 2>/dev/null || stat -c%s "$debug_log" 2>/dev/null || echo "0")
+        local size_mb=$((file_size / 1024 / 1024))
+        echo "   Debug log size: ${size_mb}MB"
+        
+        if [[ $size_mb -gt 100 ]]; then
+            echo "⚠️  WARNING: Debug log is very large (${size_mb}MB)"
+            echo "   This suggests an infinite reset loop - system cannot boot"
+            echo "   Using smaller sample for analysis..."
+            # Use only first 1000 lines to avoid processing huge files
+            head -1000 "$debug_log" > "${debug_log}.sample"
+            debug_log="${debug_log}.sample"
+        fi
+        
         # Count CPU resets
         local resets=$(grep -c "CPU Reset" "$debug_log" 2>/dev/null || echo "0")
-        echo "   CPU Resets: $resets"
+        echo "   CPU Resets detected: $resets"
         
         # Look for execution beyond resets
-        local exec_lines=$(grep -c "Trying to execute\|Taking exception\|IN:" "$debug_log" 2>/dev/null || echo "0")
+        local exec_lines=$(grep -c "Trying to execute\|Taking exception\|IN:\|pc=" "$debug_log" 2>/dev/null || echo "0")
         echo "   Code execution attempts: $exec_lines"
         
         # Check for storage access
-        local storage_access=$(grep -c "sd\|mmc\|block" "$debug_log" 2>/dev/null || echo "0")
+        local storage_access=$(grep -c -i "sd\|mmc\|block\|read\|write" "$debug_log" 2>/dev/null || echo "0")
         echo "   Storage access attempts: $storage_access"
         
         # Look for bootloader activity
@@ -557,7 +571,24 @@ analyze_boot() {
         echo "   Bootloader references: $bootloader"
         
         echo ""
-        if [[ "$exec_lines" -eq 0 && "$resets" -gt 0 ]]; then
+        if [[ $size_mb -gt 100 ]] || [[ "$resets" -gt 1000 ]]; then
+            echo "❌ DIAGNOSIS: Infinite reset loop detected"
+            echo "   The system continuously resets without executing any bootloader code."
+            echo "   This indicates a fundamental boot firmware issue:"
+            echo ""
+            echo "   PROBABLE CAUSES:"
+            echo "   1. QEMU raspi4b firmware cannot find bootloader on SD card image"
+            echo "   2. SD card image format incompatible with QEMU's raspi4b boot firmware"
+            echo "   3. Missing or corrupted boot partition in the image"
+            echo "   4. NixOS image not designed for QEMU Raspberry Pi 4 emulation"
+            echo ""
+            echo "   RECOMMENDED SOLUTIONS:"
+            echo "   1. Try a different machine type: --machine virt --console firmware"
+            echo "   2. Use a standard Raspberry Pi OS image to test QEMU setup"
+            echo "   3. Check if the NixOS image has proper Pi4 boot firmware installed"
+            echo "   4. Mount the image and verify boot partition contains bootcode.bin, start.elf"
+            echo "   5. Try a different QEMU version or Raspberry Pi emulation alternative"
+        elif [[ "$exec_lines" -eq 0 && "$resets" -gt 0 ]]; then
             echo "❌ DIAGNOSIS: System resets but never executes code"
             echo "   This indicates the bootloader is not being found or executed."
             echo "   Possible causes:"
@@ -569,13 +600,16 @@ analyze_boot() {
             echo "✅ DIAGNOSIS: Code execution detected"
             echo "   The bootloader appears to be running. Check serial logs for output."
         else
-            echo "⚠️  DIAGNOSIS: No clear boot process detected"
-            echo "   The debug log may need more verbose logging options."
+            echo "⚠️  DIAGNOSIS: No clear boot activity detected"
+            echo "   The system may not be starting at all."
         fi
         
         echo ""
-        echo "📄 Recent debug log entries:"
+        echo "📄 Sample debug log entries:"
         tail -20 "$debug_log"
+        
+        # Clean up sample file if created
+        [[ -f "${debug_log}.sample" ]] && rm -f "${debug_log}.sample"
     else
         echo "❌ No debug log found (qemu-debug.log or qemu-raspi-debug.log)"
     fi
