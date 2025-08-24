@@ -96,13 +96,33 @@ sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
 
 This means you can build Raspberry Pi images directly from your macOS development machine or any other supported platform without needing ARM64 hardware.
 
-**Note for macOS Users**: If you encounter cross-compilation errors like "a 'aarch64-linux' with features {} is required", you may need to enable cross-compilation support in your Nix configuration:
+**Note for macOS Users**: If you encounter cross-compilation errors like "a 'aarch64-linux' with features {} is required", the recommended solution is to use a remote builder with Colima:
+
+```bash
+# Install dependencies (if not already installed)
+brew install colima docker
+
+# Option 1: One-step build with automatic remote builder setup
+./emu/build-with-remote.sh
+
+# Option 2: Manual setup then build
+./emu/setup-remote-builder.sh
+nix build path:$PWD#images.rpi4
+```
+
+The `setup-remote-builder.sh` script will:
+- Start Colima with an aarch64-linux container
+- Install Nix in the container
+- Configure it as a remote builder
+- Allow native aarch64-linux builds instead of cross-compilation
+
+**Alternative manual configuration**: If you prefer manual setup or have an existing Linux machine:
 
 ```bash
 # Add to ~/.config/nix/nix.conf (create the file if it doesn't exist)
 echo "extra-platforms = aarch64-linux" >> ~/.config/nix/nix.conf
 
-# Alternative: Use a Linux remote builder if available
+# Or use an existing Linux remote builder
 echo "builders = ssh://user@linux-host aarch64-linux" >> ~/.config/nix/nix.conf
 ```
 

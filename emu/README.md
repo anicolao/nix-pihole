@@ -23,6 +23,9 @@ This directory contains a reproducible Raspberry Pi 4 emulation environment usin
 
 - **`flake.nix`** - Nix flake that provides QEMU and required tools
 - **`launch-pi.sh`** - Cross-platform script to launch the Pi 4 emulator
+- **`setup-remote-builder.sh`** - Script to set up remote builder for cross-compilation on macOS
+- **`build-with-remote.sh`** - Convenience script to build with automatic remote builder setup
+- **`test-remote-builder.sh`** - Test script to validate remote builder functionality
 - **`README.md`** - This file
 
 ## Features
@@ -86,3 +89,45 @@ You can test the script setup without a real image:
 ```
 
 This will validate that QEMU is available and the script parses arguments correctly.
+
+## Remote Builder Setup for Cross-Compilation (macOS)
+
+If you encounter issues building the Raspberry Pi image on macOS due to cross-compilation problems, use the remote builder setup:
+
+```bash
+# Set up a remote builder using Colima (requires Docker and Colima)
+./setup-remote-builder.sh
+```
+
+This script will:
+1. **Start Colima** with aarch64 support
+2. **Create a NixOS container** with SSH access
+3. **Configure Nix** to use the container as a remote builder
+4. **Test the connection** to ensure everything works
+
+After running the script, you can build Raspberry Pi images from your Mac:
+
+```bash
+# Navigate to the project root and build
+cd ..
+nix build path:$PWD#images.rpi4
+```
+
+### Remote Builder Management
+
+```bash
+# Test the remote builder setup
+./test-remote-builder.sh
+
+# Stop the remote builder when done
+docker stop nix-remote-builder
+
+# Restart the remote builder later
+./setup-remote-builder.sh
+
+# Remove the remote builder completely
+docker stop nix-remote-builder
+docker rm nix-remote-builder
+```
+
+The remote builder approach is more reliable than direct cross-compilation and works around limitations in cross-compiling NixOS systems from macOS.
