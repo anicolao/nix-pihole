@@ -69,11 +69,43 @@ start_colima() {
     # Check if Colima is already running
     if colima status &> /dev/null; then
         log_info "Colima is already running"
+        
+        # Check if the current instance has compatible settings
+        local current_info
+        current_info=$(colima status 2>/dev/null) || true
+        
+        if echo "$current_info" | grep -q "arch: aarch64"; then
+            log_success "Existing Colima instance is compatible (aarch64)"
+            return 0
+        else
+            log_warning "Existing Colima instance has incompatible architecture"
+            log_info "Stopping existing Colima instance to restart with correct settings..."
+            colima stop
+            log_info "Waiting for Colima to stop completely..."
+            sleep 3
+        fi
+    fi
+    
+    # Check if there's a stopped instance that might have incompatible settings
+    if colima list 2>/dev/null | grep -q "colima.*Stopped"; then
+        log_warning "Found stopped Colima instance. Deleting to ensure clean setup..."
+        colima delete --force colima 2>/dev/null || true
+        log_info "Waiting after cleanup..."
+        sleep 2
+    fi
+    
+    log_info "Starting Colima with aarch64 architecture and adequate resources..."
+    log_info "This may take a few minutes on first run..."
+    
+    # Start Colima with enough resources for Nix builds
+    # Use aarch64 architecture to match the target
+    # Reduced disk size to avoid resize conflicts
+    if colima start --arch aarch64 --cpu 4 --memory 8 --disk 40; then
+        log_success "Started Colima successfully"
     else
-        # Start Colima with enough resources for Nix builds
-        # Use aarch64 architecture to match the target
-        colima start --arch aarch64 --cpu 4 --memory 8 --disk 60
-        log_success "Started Colima"
+        log_error "Failed to start Colima"
+        log_info "You may need to manually clean up with: colima delete --force colima"
+        exit 1
     fi
 }
 
@@ -122,22 +154,36 @@ setup_nix_container() {
     # Check if container already exists and is running
     if docker ps | grep -q "$CONTAINER_NAME"; then
         log_info "Nix container is already running"
-        return 0
+        
+        # Test if it's actually responsive
+        if docker exec "$CONTAINER_NAME" echo "test" &>/dev/null; then
+            log_success "Existing container is responsive"
+            return 0
+        else
+            log_warning "Existing container is unresponsive, restarting..."
+            docker stop "$CONTAINER_NAME" || true
+            docker rm "$CONTAINER_NAME" || true
+        fi
     fi
     
     # Check if container exists but is stopped
     if docker ps -a | grep -q "$CONTAINER_NAME"; then
         log_info "Starting existing Nix container..."
-        docker start "$CONTAINER_NAME"
-        wait_for_container_ready
-        return 0
+        if docker start "$CONTAINER_NAME"; then
+            wait_for_container_ready
+            return 0
+        else
+            log_warning "Failed to start existing container, recreating..."
+            docker rm "$CONTAINER_NAME" || true
+        fi
     fi
     
     # Create and start new container
     log_info "Creating new Nix container..."
+    log_info "This will download the NixOS container image if not already cached..."
     
     # Use NixOS container for a full Nix environment
-    docker run -d \
+    if docker run -d \
         --name "$CONTAINER_NAME" \
         --platform linux/aarch64 \
         --privileged \
@@ -158,18 +204,28 @@ setup_nix_container() {
             
             # Start SSH daemon and keep container running
             /usr/bin/sshd -D
-        '
+        '; then
+        log_info "Container started, waiting for SSH to be ready..."
+    else
+        log_error "Failed to start container"
+        return 1
+    fi
     
     # Wait for container to be ready with proper polling
-    wait_for_container_ready
-    
-    # Copy SSH public key to container
-    docker exec "$CONTAINER_NAME" mkdir -p /root/.ssh
-    docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
-    docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
-    docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
-    
-    log_success "Nix container is ready"
+    if wait_for_container_ready; then
+        log_info "Setting up SSH keys in container..."
+        
+        # Copy SSH public key to container
+        docker exec "$CONTAINER_NAME" mkdir -p /root/.ssh
+        docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
+        docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
+        docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
+        
+        log_success "Nix container is ready"
+    else
+        log_error "Container failed to become ready"
+        return 1
+    fi
 }
 
 configure_nix_remote_builder() {

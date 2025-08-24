@@ -61,9 +61,89 @@ The builder uses Colima to create an aarch64-linux container that acts as a remo
 
 ## Troubleshooting
 
-If the build fails, try:
+If the build fails or gets stuck, try these steps in order:
 
-1. Check that Colima and Docker are installed and working
-2. Run the test script: `./builder/test-remote-builder.sh`
-3. Restart Colima: `colima stop && colima start --arch aarch64`
-4. Check the Nix remote builder configuration in `~/.config/nix/nix.conf`
+### 1. Quick Diagnosis
+
+Run the test script to check the remote builder status:
+```bash
+./builder/test-remote-builder.sh
+```
+
+### 2. Common Issues
+
+**Colima disk resize conflicts:**
+If you see warnings about disk resizing (e.g., "unable to resize disk"), you likely have an existing Colima instance with incompatible settings.
+
+**Solution:**
+```bash
+# Clean up everything and start fresh
+./builder/cleanup.sh
+
+# Then try building again
+nix develop ./builder -c ./builder/make-image.sh
+```
+
+**Container startup issues:**
+If the Nix container fails to start or become ready:
+
+```bash
+# Check if Docker is running
+docker ps
+
+# Restart Colima with correct settings
+colima stop
+colima start --arch aarch64 --cpu 4 --memory 8 --disk 40
+
+# Try setup again
+./builder/setup-remote-builder.sh
+```
+
+### 3. Manual Cleanup
+
+If automatic cleanup doesn't work, manually clean up:
+
+```bash
+# Stop and remove containers
+docker stop nix-remote-builder
+docker rm nix-remote-builder
+
+# Stop and delete Colima
+colima stop
+colima delete --force colima
+
+# Remove Nix remote builder config
+grep -v "ssh://root@localhost:2222" ~/.config/nix/nix.conf > ~/.config/nix/nix.conf.tmp
+mv ~/.config/nix/nix.conf.tmp ~/.config/nix/nix.conf
+```
+
+### 4. Verify Dependencies
+
+Make sure all required tools are installed and working:
+
+```bash
+# Check installations
+brew list colima docker
+
+# Verify Nix is working
+nix --version
+
+# Check Colima can start
+colima start --arch aarch64
+colima status
+```
+
+### 5. Getting Help
+
+If issues persist, check:
+1. The container logs: `docker logs nix-remote-builder`
+2. Colima status: `colima status`
+3. Nix configuration: `cat ~/.config/nix/nix.conf`
+
+## Scripts
+
+- `make-image.sh` - Main build script that handles everything automatically
+- `setup-remote-builder.sh` - Sets up the Colima remote builder
+- `test-remote-builder.sh` - Tests the remote builder functionality
+- `cleanup.sh` - Completely cleans up the remote builder environment
+- `flake.nix` - Nix development environment with all dependencies
