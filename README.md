@@ -78,11 +78,11 @@ nano personal/alex_users.nix  # Modify usernames and settings as needed
 To create a bootable SD card image for your Raspberry Pi 4. Thanks to cross-compilation support, you can build the ARM64 image from any supported platform including Linux, macOS (Intel and Apple Silicon), and other architectures:
 
 ```bash
-# Build the SD card image (works on any supported platform)
-nix build path:$PWD#images.rpi4
-
-# Alternative: Build via packages interface
+# Build the SD card image (works on any supported platform via cross-compilation)
 nix build path:$PWD#packages.$(nix eval --raw --impure --expr 'builtins.currentSystem').rpi4-image
+
+# Alternative: Build via top-level images interface (default cross-compilation from x86_64-linux)
+nix build path:$PWD#images.rpi4
 
 # Flash the image to your SD card
 sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
