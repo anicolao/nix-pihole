@@ -5,7 +5,7 @@ set -e # Exit immediately if a command fails
 MACHINE_TYPE="raspi4b"
 CPU_TYPE="cortex-a72"
 DTB_FILE="bcm2711-rpi-4-b.dtb" # Device Tree Blob for Pi 4 Model B
-KERNEL_FILE="kernel8.img"  # 64-bit kernel image name
+KERNEL_FILE="u-boot-rpi4.bin"  # U-Boot binary for Raspberry Pi 4
 SSH_FORWARD_PORT="5022"        # Host port to forward to the VM's SSH port 22
 
 # --- Helper functions ---
@@ -28,7 +28,7 @@ EXAMPLES:
     $0 --dry-run raspios-lite.img
 
 The script will:
-1. Extract kernel and device tree files from the image
+1. Extract device tree files and use u-boot for booting
 2. Launch QEMU with Raspberry Pi 4 emulation
 3. Forward SSH from localhost:PORT to the VM
 4. Clean up temporary files when done
@@ -163,7 +163,7 @@ WORKDIR=$(pwd)
 if [[ "$DRY_RUN" == "true" ]]; then
     echo "🔍 Dry-run mode: Validating image and showing command..." >&2
     echo "✅ Image file exists: $DISK_IMAGE" >&2
-    echo "✅ Would extract kernel files from image" >&2
+    echo "✅ Would extract device tree files and use u-boot kernel" >&2
     echo "✅ Would copy $DTB_FILE and $KERNEL_FILE to $WORKDIR" >&2
     
     # Create fake temporary files for dry-run
@@ -199,7 +199,7 @@ else
     }
     trap cleanup EXIT
 
-    echo "✅ Copying kernel and DTB from the image..." >&2
+    echo "✅ Copying device tree from image and using u-boot kernel..." >&2
     if [[ ! -f "$BOOT_MOUNT/$DTB_FILE" ]]; then
         echo "❌ Device tree file not found: $BOOT_MOUNT/$DTB_FILE" >&2
         echo "   This might not be a valid Raspberry Pi image." >&2
@@ -207,8 +207,9 @@ else
     fi
 
     if [[ ! -f "$BOOT_MOUNT/$KERNEL_FILE" ]]; then
-        echo "❌ Kernel file not found: $BOOT_MOUNT/$KERNEL_FILE" >&2
-        echo "   This might not be a valid Raspberry Pi image." >&2
+        echo "❌ U-Boot file not found: $BOOT_MOUNT/$KERNEL_FILE" >&2
+        echo "   Looking for u-boot-rpi4.bin in the boot partition." >&2
+        echo "   This might not be a valid Raspberry Pi image with u-boot." >&2
         exit 1
     fi
 
@@ -236,7 +237,7 @@ QEMU_CMD=(
     -smp 4
     -dtb "$WORKDIR/$DTB_FILE"
     -kernel "$WORKDIR/$KERNEL_FILE"
-    -drive "file=$DISK_IMAGE,format=raw,if=sd,id=sd0"
+    -drive "if=sd,format=raw,file=$DISK_IMAGE"
     -append "rw earlyprintk loglevel=8 console=ttyAMA0,115200 dwc_otg.lpm_enable=0 root=/dev/mmcblk0p2 rootdelay=1"
     -netdev "user,id=net0,hostfwd=tcp::$SSH_FORWARD_PORT-:22"
     -device "usb-net,netdev=net0"

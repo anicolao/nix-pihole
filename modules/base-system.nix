@@ -71,13 +71,13 @@ with lib;
 
     # Boot configuration for ARM devices
     boot = {
-      kernelParams = ["console=tty1" "console=ttyS0,115200"];
+      kernelParams = ["console=tty1" "console=ttyAMA0,115200"];
       loader.grub.enable = false;
       loader.generic-extlinux-compatible.enable = true;
     };
     
     # Serial console support
-    systemd.services."serial-getty@ttyS0" = {
+    systemd.services."serial-getty@ttyAMA0" = {
       enable = true;
       serviceConfig.Restart = "always"; # restart when session is closed
     };
