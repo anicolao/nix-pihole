@@ -137,44 +137,44 @@ run_all_tests() {
     local passed_tests=0
     
     # Test dependencies
-    ((total_tests++))
+    total_tests=$((total_tests + 1))
     if test_dependencies; then
-        ((passed_tests++))
+        passed_tests=$((passed_tests + 1))
     fi
     echo ""
     
     # Test Colima status
-    ((total_tests++))
+    total_tests=$((total_tests + 1))
     if test_colima_status; then
-        ((passed_tests++))
+        passed_tests=$((passed_tests + 1))
     fi
     echo ""
     
     # Test remote builder config
-    ((total_tests++))
+    total_tests=$((total_tests + 1))
     if test_remote_builder_config; then
-        ((passed_tests++))
+        passed_tests=$((passed_tests + 1))
     fi
     echo ""
     
     # Test container status
-    ((total_tests++))
+    total_tests=$((total_tests + 1))
     if test_container_status; then
-        ((passed_tests++))
+        passed_tests=$((passed_tests + 1))
     fi
     echo ""
     
     # Test SSH connection
-    ((total_tests++))
+    total_tests=$((total_tests + 1))
     if test_ssh_connection; then
-        ((passed_tests++))
+        passed_tests=$((passed_tests + 1))
     fi
     echo ""
     
     # Test simple build
-    ((total_tests++))
+    total_tests=$((total_tests + 1))
     if test_simple_build; then
-        ((passed_tests++))
+        passed_tests=$((passed_tests + 1))
     fi
     echo ""
     

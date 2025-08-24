@@ -109,7 +109,7 @@ wait_for_container_ready() {
         fi
         
         sleep 1
-        ((wait_time++))
+        wait_time=$((wait_time + 1))
     done
     
     log_error "Container failed to become ready within ${max_wait} seconds"
