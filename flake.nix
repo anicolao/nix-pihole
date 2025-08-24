@@ -13,9 +13,15 @@
     # Support cross-compilation from multiple host systems
     systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
     forAllSystems = nixpkgs.lib.genAttrs systems;
-  in rec {
-    nixosConfigurations.rpi4 = nixpkgs.lib.nixosSystem {
-      system = "aarch64-linux";
+    
+    # Create a function to build the RPI4 image with proper cross-compilation support
+    mkRpi4Image = hostSystem: let
+      pkgs = import nixpkgs {
+        system = hostSystem;
+        crossSystem = nixpkgs.lib.systems.examples.aarch64-multiplatform;
+      };
+    in nixpkgs.lib.nixosSystem {
+      inherit pkgs;
       modules = [
         "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
         ./sdimage.nix
@@ -23,13 +29,17 @@
         ./configuration.nix
       ];
     };
+  in rec {
+    # For backward compatibility, provide a default rpi4 configuration
+    nixosConfigurations.rpi4 = mkRpi4Image "aarch64-linux";
 
-    # Make the image available directly (cross-compilation handled automatically)
-    images.rpi4 = nixosConfigurations.rpi4.config.system.build.sdImage;
+    # Make the image available directly with cross-compilation support
+    # Use the current system for cross-compilation
+    images.rpi4 = (mkRpi4Image (builtins.currentSystem or "x86_64-linux")).config.system.build.sdImage;
 
     packages = forAllSystems (system: {
       # Provide the image as a package for easy building
-      rpi4-image = nixosConfigurations.rpi4.config.system.build.sdImage;
+      rpi4-image = (mkRpi4Image system).config.system.build.sdImage;
     }) // {
       aarch64-linux.nixosConfigurations."${hostname}" = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
