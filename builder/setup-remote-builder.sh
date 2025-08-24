@@ -159,9 +159,14 @@ setup_nix_container() {
             echo "sshd:x:74:74:Privilege-separated SSH:/var/run/sshd:/sbin/nologin" >> /etc/passwd
         fi
         
-        # Create the sshd home directory  
+        # Create required SSH directories
         mkdir -p /var/run/sshd
         chown sshd:sshd /var/run/sshd
+        
+        # Create privilege separation directory required by SSH daemon
+        mkdir -p /var/empty
+        chown root:root /var/empty
+        chmod 755 /var/empty
         
         # Generate host keys if they do not exist
         if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
