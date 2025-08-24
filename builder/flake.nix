@@ -23,12 +23,15 @@
             nix
             
             # Utilities
-            coreutils
+            coreutils  # includes timeout command
             bash
             curl
             jq
             netcat
             openssh
+            
+            # Process management utilities
+            procps    # includes pgrep, pkill
           ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             # macOS specific packages if needed
           ];

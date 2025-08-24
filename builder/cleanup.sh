@@ -76,14 +76,26 @@ fi
 log_info "Cleaning up Colima..."
 if colima status &>/dev/null; then
     log_info "Stopping Colima..."
-    colima stop
-    log_success "Stopped Colima"
+    if timeout 30 colima stop; then
+        log_success "Stopped Colima"
+    else
+        log_warning "Colima stop timed out, forcing deletion..."
+    fi
 fi
 
 if colima list 2>/dev/null | grep -q "colima"; then
     log_info "Deleting Colima VM..."
-    colima delete --force colima
-    log_success "Deleted Colima VM"
+    if timeout 30 colima delete --force colima; then
+        log_success "Deleted Colima VM"
+    else
+        log_warning "Colima delete timed out, cleaning up manually..."
+        # Try to clean up Colima files if the command hangs
+        if [[ -d "$HOME/.colima" ]]; then
+            log_info "Removing Colima directory manually..."
+            rm -rf "$HOME/.colima" 2>/dev/null || true
+            log_success "Manually cleaned up Colima directory"
+        fi
+    fi
 else
     log_info "No Colima VM found"
 fi

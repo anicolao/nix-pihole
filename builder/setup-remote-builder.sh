@@ -83,8 +83,26 @@ start_colima() {
         else
             log_warning "Existing Colima instance has incompatible architecture"
             log_info "Stopping existing Colima instance to restart with correct settings..."
-            colima stop
-            log_info "Waiting for Colima to stop completely..."
+            log_info "This may take up to 30 seconds..."
+            
+            # Use timeout to prevent hanging on colima stop
+            if timeout 30 colima stop; then
+                log_info "Successfully stopped Colima"
+            else
+                log_warning "Colima stop timed out or failed, forcing deletion..."
+                log_info "If this continues to hang, press Ctrl+C and run: ./builder/cleanup.sh"
+                # Force delete if stop hangs or fails
+                if timeout 30 colima delete --force colima 2>/dev/null; then
+                    log_info "Successfully force-deleted Colima instance"
+                else
+                    log_error "Colima delete also timed out. Manual cleanup may be required."
+                    log_info "Try running: ./builder/cleanup.sh"
+                    log_info "Or manually: rm -rf ~/.colima && pkill -f colima"
+                    exit 1
+                fi
+            fi
+            
+            log_info "Waiting for cleanup to complete..."
             sleep 3
         fi
     fi
@@ -92,7 +110,11 @@ start_colima() {
     # Check if there's a stopped instance that might have incompatible settings
     if colima list 2>/dev/null | grep -q "colima.*Stopped"; then
         log_warning "Found stopped Colima instance. Deleting to ensure clean setup..."
-        colima delete --force colima 2>/dev/null || true
+        if timeout 20 colima delete --force colima 2>/dev/null; then
+            log_info "Successfully deleted stopped instance"
+        else
+            log_warning "Delete operation timed out, continuing anyway..."
+        fi
         log_info "Waiting after cleanup..."
         sleep 2
     fi
@@ -107,7 +129,12 @@ start_colima() {
         log_success "Started Colima successfully"
     else
         log_error "Failed to start Colima"
-        log_info "You may need to manually clean up with: colima delete --force colima"
+        log_info "You may need to manually clean up with:"
+        log_info "  ./builder/cleanup.sh"
+        log_info "Or manually:"
+        log_info "  colima delete --force colima"
+        log_info "  rm -rf ~/.colima"
+        log_info "Then try again"
         exit 1
     fi
 }
