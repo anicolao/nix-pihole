@@ -133,34 +133,77 @@ setup_nix_container() {
     log_info "Creating new Nix container..."
     
     # Use NixOS container for a full Nix environment
+    # Start container with a simple command that keeps it running
     docker run -d \
         --name "$CONTAINER_NAME" \
         --platform linux/aarch64 \
         --privileged \
         -p 2222:22 \
         nixos/nix:latest \
-        sh -c '
-            # Install SSH server and other needed packages
-            nix-env -iA nixpkgs.openssh nixpkgs.git
-            
-            # Setup SSH
-            mkdir -p /etc/ssh /root/.ssh
-            ssh-keygen -A
-            
-            # Configure SSH to allow root login
-            echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
-            echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
-            echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
-            
-            # Start SSH daemon and keep container running
-            /usr/bin/sshd -D
-        '
+        tail -f /dev/null
+    
+    # Wait a moment for container to start
+    sleep 2
+    
+    # Verify container is still running
+    if ! docker ps | grep -q "$CONTAINER_NAME"; then
+        log_error "Container failed to start or exited immediately"
+        log_info "Container logs:"
+        docker logs "$CONTAINER_NAME" 2>&1 | head -20
+        return 1
+    fi
+    
+    # Set up SSH server inside the running container
+    log_info "Installing SSH server in container..."
+    docker exec "$CONTAINER_NAME" nix-env -iA nixpkgs.openssh nixpkgs.git
+    
+    log_info "Configuring SSH server..."
+    docker exec "$CONTAINER_NAME" mkdir -p /etc/ssh /root/.ssh
+    docker exec "$CONTAINER_NAME" ssh-keygen -A
+    
+    # Configure SSH to allow root login
+    docker exec "$CONTAINER_NAME" sh -c 'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config'
+    docker exec "$CONTAINER_NAME" sh -c 'echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config'
+    docker exec "$CONTAINER_NAME" sh -c 'echo "PasswordAuthentication no" >> /etc/ssh/sshd_config'
     
     # Copy SSH public key to container
-    docker exec "$CONTAINER_NAME" mkdir -p /root/.ssh
     docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
     docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
     docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
+    
+    # Find the correct path for sshd and start it
+    log_info "Starting SSH daemon..."
+    
+    # First, verify that sshd was installed successfully
+    if ! docker exec "$CONTAINER_NAME" sh -c 'find /nix/store -name sshd -type f -executable 2>/dev/null | head -1' >/dev/null; then
+        log_error "SSH daemon not found in container after installation"
+        return 1
+    fi
+    
+    # Start SSH daemon in background
+    docker exec -d "$CONTAINER_NAME" sh -c '
+        # Find sshd binary location
+        SSHD_PATH=$(find /nix/store -name sshd -type f -executable 2>/dev/null | head -1)
+        if [ -z "$SSHD_PATH" ]; then
+            echo "ERROR: Could not find sshd binary" >&2
+            exit 1
+        fi
+        echo "Starting sshd at: $SSHD_PATH" >&2
+        
+        # Start SSH daemon with verbose logging for debugging
+        exec "$SSHD_PATH" -D -e
+    '
+    
+    # Give SSH daemon a moment to start
+    sleep 2
+    
+    # Verify container is still running after SSH setup
+    if ! docker ps | grep -q "$CONTAINER_NAME"; then
+        log_error "Container exited after SSH daemon setup"
+        log_info "Container logs:"
+        docker logs "$CONTAINER_NAME" 2>&1 | tail -20
+        return 1
+    fi
     
     log_success "Nix container is ready"
 }
