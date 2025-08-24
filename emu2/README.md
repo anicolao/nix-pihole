@@ -108,8 +108,15 @@ Unlike the original `emu/` that extracts kernel and device tree files:
 - Try `--memory 1G` if running on limited hardware
 - Ensure the image is a valid NixOS SD card image
 
-### Network/SSH Issues
-- Wait for complete boot process (may take 1-2 minutes)
+### Console Output Issues
+- **Console output should appear immediately** after the "Launching QEMU" message
+- If you see **no boot messages** but QEMU appears to be running, this indicates a serial console configuration issue
+- The framework automatically configures ARM UART console (`-chardev stdio,id=char0 -serial chardev:char0`) with kernel parameters (`console=ttyAMA0,115200`) to ensure console output is visible
+- In VNC mode, console output appears in the terminal while graphics appear in the VNC viewer
+
+### Network Issues  
+- **Slirp network errors**: Fixed by using `rtl8139` network device which provides better compatibility with Raspberry Pi 4 emulation without requiring PCI bus support
+- **SSH connection issues**: Wait for complete boot process (may take 1-2 minutes)
 - Check SSH service is enabled in the NixOS configuration
 - Verify the SSH forward port isn't already in use
 
