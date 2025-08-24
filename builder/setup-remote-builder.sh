@@ -150,6 +150,19 @@ setup_nix_container() {
         # Create necessary directories
         mkdir -p /var/run/sshd /root/.ssh /etc/ssh
         
+        # Create the sshd user and group required for privilege separation
+        # Use standard Unix commands to create system user
+        if ! getent group sshd >/dev/null 2>&1; then
+            echo "sshd:x:74:" >> /etc/group
+        fi
+        if ! getent passwd sshd >/dev/null 2>&1; then
+            echo "sshd:x:74:74:Privilege-separated SSH:/var/run/sshd:/sbin/nologin" >> /etc/passwd
+        fi
+        
+        # Create the sshd home directory  
+        mkdir -p /var/run/sshd
+        chown sshd:sshd /var/run/sshd
+        
         # Generate host keys if they do not exist
         if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
             ~/.nix-profile/bin/ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N ""
@@ -163,17 +176,17 @@ setup_nix_container() {
         
         # Create a minimal SSH configuration
         cat > /etc/ssh/sshd_config << EOF
-# Basic SSH configuration
+# Basic SSH configuration for container
 Port 22
 PermitRootLogin yes
 PubkeyAuthentication yes
 PasswordAuthentication no
-StrictModes no
 UsePAM no
+StrictModes no
 
-# Host key locations
+# Use default host key locations
 HostKey /etc/ssh/ssh_host_rsa_key
-HostKey /etc/ssh/ssh_host_ecdsa_key  
+HostKey /etc/ssh/ssh_host_ecdsa_key
 HostKey /etc/ssh/ssh_host_ed25519_key
 
 # Disable some features for simplicity
@@ -183,10 +196,14 @@ PrintMotd no
 EOF
         
         # Test SSH configuration
+        echo "Testing SSH daemon configuration..."
         if ~/.nix-profile/bin/sshd -T -f /etc/ssh/sshd_config >/dev/null 2>&1; then
             echo "SSH configuration test passed"
         else
             echo "SSH configuration test failed"
+            echo "SSH configuration:"
+            cat /etc/ssh/sshd_config
+            echo "Error output:"
             ~/.nix-profile/bin/sshd -T -f /etc/ssh/sshd_config
             exit 1
         fi
