@@ -183,21 +183,32 @@ setup_nix_container() {
         cat > /etc/ssh/sshd_config << EOF
 # Basic SSH configuration for container
 Port 22
+ListenAddress 0.0.0.0
 PermitRootLogin yes
 PubkeyAuthentication yes
 PasswordAuthentication no
 UsePAM no
 StrictModes no
 
+# Allow connections from all users and hosts
+AllowUsers root
+MaxStartups 100:30:1000
+MaxSessions 100
+
 # Use default host key locations
 HostKey /etc/ssh/ssh_host_rsa_key
 HostKey /etc/ssh/ssh_host_ecdsa_key
 HostKey /etc/ssh/ssh_host_ed25519_key
 
-# Disable some features for simplicity
+# Disable some features for simplicity but enable necessary ones for remote access
 UseDNS no
 X11Forwarding no
 PrintMotd no
+
+# Connection settings for better remote access
+ClientAliveInterval 60
+ClientAliveCountMax 3
+TCPKeepAlive yes
 EOF
         
         # Test SSH configuration
