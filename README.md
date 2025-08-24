@@ -96,6 +96,18 @@ sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
 
 This means you can build Raspberry Pi images directly from your macOS development machine or any other supported platform without needing ARM64 hardware.
 
+**Note for macOS Users**: If you encounter cross-compilation errors like "a 'aarch64-linux' with features {} is required", you may need to enable cross-compilation support in your Nix configuration:
+
+```bash
+# Add to ~/.config/nix/nix.conf (create the file if it doesn't exist)
+echo "extra-platforms = aarch64-linux" >> ~/.config/nix/nix.conf
+
+# Alternative: Use a Linux remote builder if available
+echo "builders = ssh://user@linux-host aarch64-linux" >> ~/.config/nix/nix.conf
+```
+
+After adding these settings, restart your Nix daemon and try the build again.
+
 ### 3. Initial Setup
 
 1. Insert the SD card into your Raspberry Pi 4
