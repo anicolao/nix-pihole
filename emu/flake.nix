@@ -23,11 +23,11 @@
               pkgs.qemu_full
               # Add utilities for image manipulation
               pkgs.parted
-              pkgs.util-linux
             ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
               # macOS-specific tools are handled by the system
             ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               # Linux-specific tools for image mounting
+              pkgs.util-linux
               pkgs.kpartx
               pkgs.mount
             ];
