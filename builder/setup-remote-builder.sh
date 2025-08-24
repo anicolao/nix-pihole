@@ -144,8 +144,8 @@ setup_nix_container() {
     
     # Install openssh and configure it properly using Nix
     docker exec "$CONTAINER_NAME" sh -c '
-        # Install openssh via nix-env
-        nix-env -i openssh
+        # Install openssh and network tools via nix-env
+        nix-env -i openssh nettools
         
         # Create necessary directories
         mkdir -p /var/run/sshd /root/.ssh /etc/ssh
@@ -209,7 +209,14 @@ PrintMotd no
 ClientAliveInterval 60
 ClientAliveCountMax 3
 TCPKeepAlive yes
+
+# Disable TCP wrappers to prevent "Not allowed at this time" errors
+UsePAM no
 EOF
+        
+        # Disable TCP wrappers by creating permissive hosts.allow and hosts.deny files
+        echo "ALL: ALL" > /etc/hosts.allow
+        echo "" > /etc/hosts.deny
         
         # Test SSH configuration
         echo "Testing SSH daemon configuration..."
@@ -242,6 +249,38 @@ EOF
     # Start SSH daemon
     log_info "Starting SSH daemon..."
     docker exec -d "$CONTAINER_NAME" sh -c '~/.nix-profile/bin/sshd -D -f /etc/ssh/sshd_config'
+    
+    # Give SSH daemon a moment to start
+    sleep 2
+    
+    # Verify SSH daemon is running and listening
+    log_info "Verifying SSH daemon status..."
+    docker exec "$CONTAINER_NAME" sh -c '
+        # Check if SSH daemon process is running
+        if pgrep -f sshd >/dev/null 2>&1; then
+            echo "SSH daemon process is running"
+            
+            # Check if SSH is listening on port 22
+            if command -v netstat >/dev/null 2>&1; then
+                echo "SSH listening status:"
+                netstat -ln | grep :22 || echo "SSH port 22 not found in netstat"
+            elif command -v ss >/dev/null 2>&1; then
+                echo "SSH listening status:"
+                ss -ln | grep :22 || echo "SSH port 22 not found in ss"
+            fi
+            
+            # Test local SSH connection within container
+            echo "Testing local SSH connection..."
+            if ~/.nix-profile/bin/ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 root@localhost -p 22 "echo \"Local SSH works\"" 2>/dev/null; then
+                echo "Local SSH connection successful"
+            else
+                echo "Local SSH connection failed"
+            fi
+        else
+            echo "SSH daemon process not found"
+            exit 1
+        fi
+    '
     
     log_success "NixOS container with SSH is ready"
 }
