@@ -84,14 +84,23 @@ wait_for_container_ready() {
     log_info "Waiting for container to be ready..."
     
     while [[ $wait_time -lt $max_wait ]]; do
-        # Try to connect using netcat to check if SSH port is responsive
-        if command -v nc &> /dev/null && nc -z localhost 2222 2>/dev/null; then
-            log_success "Container SSH port is responsive after ${wait_time}s"
-            return 0
-        # Fallback to testing SSH connection directly if netcat is not available
-        elif ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=2 -o BatchMode=yes root@localhost -p 2222 'exit' &>/dev/null; then
-            log_success "Container SSH is ready after ${wait_time}s"
-            return 0
+        # First check if port is open using netcat if available
+        local port_open=false
+        if command -v nc &> /dev/null; then
+            if nc -z localhost 2222 2>/dev/null; then
+                port_open=true
+            fi
+        else
+            # If nc not available, assume port might be open and try SSH directly
+            port_open=true
+        fi
+        
+        # If port seems open, test actual SSH connectivity
+        if [[ "$port_open" == "true" ]]; then
+            if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=2 -o BatchMode=yes root@localhost -p 2222 'exit' &>/dev/null; then
+                log_success "Container SSH is ready after ${wait_time}s"
+                return 0
+            fi
         fi
         
         # Print status update every 5 seconds to avoid spam
