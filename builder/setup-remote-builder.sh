@@ -150,23 +150,9 @@ setup_nix_container() {
         # Create necessary directories
         mkdir -p /var/run/sshd /root/.ssh /etc/ssh
         
-        # Create the sshd user and group required for privilege separation
-        # Use standard Unix commands to create system user
-        if ! getent group sshd >/dev/null 2>&1; then
-            echo "sshd:x:74:" >> /etc/group
-        fi
-        if ! getent passwd sshd >/dev/null 2>&1; then
-            echo "sshd:x:74:74:Privilege-separated SSH:/var/run/sshd:/sbin/nologin" >> /etc/passwd
-        fi
-        
-        # Create required SSH directories
-        mkdir -p /var/run/sshd
-        chown sshd:sshd /var/run/sshd
-        
-        # Create privilege separation directory required by SSH daemon
-        mkdir -p /var/empty
-        chown root:root /var/empty
-        chmod 755 /var/empty
+        # Since we're disabling privilege separation, we don't need the sshd user setup
+        # But we still need the basic directories
+        mkdir -p /var/run/sshd /var/empty
         
         # Generate host keys if they do not exist
         if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
@@ -179,9 +165,9 @@ setup_nix_container() {
             ~/.nix-profile/bin/ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
         fi
         
-        # Create a minimal SSH configuration
+        # Create a minimal SSH configuration optimized for containers
         cat > /etc/ssh/sshd_config << EOF
-# Basic SSH configuration for container
+# Basic SSH configuration for container - disable privilege separation
 Port 22
 ListenAddress 0.0.0.0
 PermitRootLogin yes
@@ -189,6 +175,9 @@ PubkeyAuthentication yes
 PasswordAuthentication no
 UsePAM no
 StrictModes no
+
+# Disable privilege separation to avoid container-specific issues
+UsePrivilegeSeparation no
 
 # Allow connections from all users and hosts
 AllowUsers root
@@ -210,13 +199,9 @@ ClientAliveInterval 60
 ClientAliveCountMax 3
 TCPKeepAlive yes
 
-# Disable TCP wrappers to prevent "Not allowed at this time" errors
-UsePAM no
+# Log more verbosely for debugging
+LogLevel DEBUG1
 EOF
-        
-        # Disable TCP wrappers by creating permissive hosts.allow and hosts.deny files
-        echo "ALL: ALL" > /etc/hosts.allow
-        echo "" > /etc/hosts.deny
         
         # Test SSH configuration
         echo "Testing SSH daemon configuration..."
@@ -394,7 +379,7 @@ cleanup_on_exit() {
 main() {
     trap cleanup_on_exit EXIT
     
-    log_info "Setting up Nix remote builder with Colima and Ubuntu container..."
+    log_info "Setting up Nix remote builder with Colima and NixOS container..."
     
     check_dependencies
     setup_ssh_key
