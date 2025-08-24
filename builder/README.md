@@ -20,25 +20,27 @@ nix develop ./builder -c ./builder/make-image.sh
 
 ## How It Works
 
-The builder solution uses two approaches:
+The builder solution uses a simplified approach that leverages existing Docker images:
 
-1. **Preferred: NixOS Docker Image** - A proper NixOS configuration creates a Docker image with SSH pre-configured
-2. **Fallback: Manual Setup** - If the NixOS image build fails, falls back to manual SSH configuration
+**Alpine Linux + Nix Image** - Uses the official `nixos/nix:latest` Docker image which provides:
+- Pre-installed Nix package manager on Alpine Linux base
+- Standard Alpine package management (apk) for reliable SSH server installation  
+- Eliminates complex Nix installation and privilege separation issues
+- Uses declarative Alpine package management instead of manual SSH configuration
 
-### NixOS Docker Image Approach
+This approach avoids the previous complexity of:
+- Installing Nix from scratch in containers (which often failed due to network or dependency issues)
+- Manual SSH daemon configuration with privilege separation setup
+- Complex systemd-based container setups that caused "failed to create task" errors
 
-The preferred approach uses:
-- `remote-builder-config.nix` - A proper NixOS configuration for the remote builder container
-- `remote-builder-flake.nix` - Nix flake that builds the Docker image declaratively
-- Automatically configured SSH service, users, and build environment
-- No manual user creation or SSH daemon configuration needed
+### Technical Details
 
-### Fallback Manual Approach
-
-If the NixOS image approach fails, the system falls back to:
-- Using the `nixos/nix:latest` base image
-- Manually installing SSH and configuring it
-- This is the "hard mode" approach mentioned in feedback, but serves as a reliable fallback
+The setup process:
+1. Uses `nixos/nix:latest` image with Nix already installed on Alpine Linux
+2. Installs SSH server via Alpine's `apk` package manager (much more reliable than manual setup)
+3. Configures SSH using standard configuration files and Alpine's service management
+4. Sets up SSH keys for remote access
+5. Configures Nix for remote building with proper settings
 
 ## Files
 

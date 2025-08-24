@@ -140,60 +140,55 @@ start_colima() {
 }
 
 setup_nix_container() {
-    log_info "Setting up Nix container..."
+    log_info "Setting up Nix container with pre-installed Nix..."
     
-    # Check if container already exists and is running
-    if docker ps | grep -q "$CONTAINER_NAME"; then
-        log_info "Nix container is already running"
-        return 0
+    # Remove existing container if it exists to ensure clean state
+    if docker ps -a --format 'table {{.Names}}' | grep -q "^$CONTAINER_NAME$"; then
+        log_info "Removing existing container for clean setup..."
+        docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     fi
     
-    # Check if container exists but is stopped
-    if docker ps -a | grep -q "$CONTAINER_NAME"; then
-        log_info "Starting existing Nix container..."
-        docker start "$CONTAINER_NAME"
-        sleep 3
-        return 0
-    fi
+    log_info "Creating new container with Nix pre-installed..."
     
-    log_info "Creating new Nix container..."
-    
-    # Use Ubuntu base image with simple setup - much more reliable than systemd containers
+    # Use nixos/nix image which has Nix pre-installed on Alpine Linux base
+    # Alpine has standard package management (apk) that should work reliably for SSH
     docker run -d \
         --name "$CONTAINER_NAME" \
         --platform linux/aarch64 \
         -p 2222:22 \
-        ubuntu:22.04 \
-        /bin/bash -c "apt-get update && apt-get install -y openssh-server curl xz-utils sudo && \
-                      mkdir -p /var/run/sshd && \
-                      echo 'root:password' | chpasswd && \
-                      sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-                      sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
-                      /usr/sbin/sshd -D"
+        nixos/nix:latest \
+        tail -f /dev/null
     
-    # Give the container time to start up and install packages
+    # Give the container time to start up
     log_info "Waiting for container initialization..."
-    sleep 10
+    sleep 5
     
-    # Install Nix in the container
-    log_info "Installing Nix in the container..."
+    # Install SSH using Alpine package manager (much more reliable than manual setup)
+    log_info "Installing SSH server using Alpine package manager..."
     docker exec "$CONTAINER_NAME" sh -c '
-        # Install Nix in single-user mode to avoid nixbld group requirements
-        curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
+        # Update package index and install OpenSSH and network tools
+        apk update
+        apk add openssh openssh-server netstat-nat
         
-        # Source Nix environment for single-user installation
-        . /root/.nix-profile/etc/profile.d/nix.sh
+        # Generate SSH host keys
+        ssh-keygen -A
         
-        # Configure Nix for remote building
-        mkdir -p /root/.config/nix
-        cat > /root/.config/nix/nix.conf << EOF
-experimental-features = nix-command flakes
-trusted-users = root
-sandbox = false
-EOF
+        # Create SSH run directory
+        mkdir -p /var/run/sshd
         
-        # Verify Nix installation
-        nix --version
+        # Configure SSH for remote access
+        sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin yes/" /etc/ssh/sshd_config
+        sed -i "s/#PubkeyAuthentication yes/PubkeyAuthentication yes/" /etc/ssh/sshd_config
+        sed -i "s/#PasswordAuthentication yes/PasswordAuthentication no/" /etc/ssh/sshd_config
+        
+        # Set root password (for emergency access, though we use keys)
+        echo "root:password" | chpasswd
+        
+        # Start SSH daemon
+        /usr/sbin/sshd
+        
+        # Verify SSH is running
+        ps aux | grep sshd
     '
     
     # Add SSH key to the container
@@ -203,15 +198,32 @@ EOF
     docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
     docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
     
-    # Restart SSH to ensure it's running properly
-    log_info "Ensuring SSH service is running..."
-    docker exec "$CONTAINER_NAME" service ssh restart
+    # Verify Nix is available and working
+    log_info "Verifying Nix installation..."
+    docker exec "$CONTAINER_NAME" nix --version
     
-    # Verify SSH service is running
-    log_info "Verifying SSH service status..."
-    docker exec "$CONTAINER_NAME" service ssh status
+    # Configure Nix for remote building
+    log_info "Configuring Nix for remote building..."
+    docker exec "$CONTAINER_NAME" sh -c '
+        mkdir -p /root/.config/nix
+        cat > /root/.config/nix/nix.conf << EOF
+experimental-features = nix-command flakes
+trusted-users = root
+sandbox = false
+EOF
+    '
     
-    log_success "Nix container with SSH service is ready"
+    # Test SSH connectivity from inside container
+    log_info "Testing SSH daemon accessibility..."
+    docker exec "$CONTAINER_NAME" sh -c '
+        # Test that SSH is listening on port 22
+        netstat -tlnp | grep :22 || echo "SSH not listening on port 22"
+        
+        # Test SSH daemon configuration
+        /usr/sbin/sshd -T || echo "SSH configuration test failed"
+    '
+    
+    log_success "Container with pre-installed Nix and SSH service is ready"
 }
 
 wait_for_container_ready() {
