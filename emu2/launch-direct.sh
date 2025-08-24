@@ -288,8 +288,13 @@ elif [[ "$MACHINE_TYPE" == "uefi" ]]; then
         QEMU_CMD+=(-bios "$UEFI_FIRMWARE")
     else
         echo "⚠️  UEFI firmware not found, falling back to standard virt machine"
-        echo "   Install qemu-efi-aarch64 package for UEFI support"
-        echo "   In Nix environment, add pkgs.OVMF to your flake.nix packages"
+        if [[ -n "$IN_NIX_SHELL" ]]; then
+            echo "   Running in Nix environment - add pkgs.OVMF to your flake.nix packages"
+            echo "   Then rebuild the environment with: nix develop"
+        else
+            echo "   Not in Nix environment - run: nix develop"
+            echo "   Or install qemu-efi-aarch64 package for UEFI support"
+        fi
     fi
     # Use virtio block device for UEFI
     QEMU_CMD+=(-drive "if=virtio,format=raw,file=$DISK_IMAGE")

@@ -42,10 +42,12 @@
               echo ""
               echo "Usage:"
               echo "  ./launch-direct.sh /path/to/nixos-rpi4-image.img"
+              echo "  ./launch-direct.sh --machine uefi --console firmware /path/to/modern-pi4-image.img"
               echo "  ./launch-direct.sh --help for more options"
               echo ""
               echo "Available tools:"
               echo "  - qemu-system-aarch64: ARM64 emulator with full firmware support"
+              echo "  - UEFI firmware (OVMF): For modern Pi4 UEFI images"
               echo "  - file: File type detection"
               ${if pkgs.stdenv.isDarwin then ''
               echo "  - Running on macOS with native support"
@@ -55,9 +57,13 @@
               echo ""
               echo "Key advantages over emu/:"
               echo "  ✅ No file extraction needed"
-              echo "  ✅ Boots like real hardware via U-Boot"
+              echo "  ✅ Boots like real hardware via U-Boot or UEFI"
               echo "  ✅ Works with NixOS SD images"
+              echo "  ✅ UEFI support for modern Pi4 images"
               echo "  ✅ Cross-platform (macOS/Linux)"
+              echo ""
+              echo "For modern Pi4 NixOS images with UEFI:"
+              echo "  Use --machine uefi option for best compatibility"
             '';
           };
         }
