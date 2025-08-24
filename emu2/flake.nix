@@ -23,6 +23,8 @@
               pkgs.qemu_full
               # Include QEMU firmware for proper EFI/UEFI support
               pkgs.qemu-utils
+              # UEFI firmware for ARM64 emulation
+              pkgs.OVMF
               # Basic utilities 
               pkgs.file
             ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [

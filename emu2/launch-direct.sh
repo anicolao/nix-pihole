@@ -64,6 +64,11 @@ UEFI vs TRADITIONAL BOOT:
     Modern Raspberry Pi 4 NixOS images often use UEFI firmware instead of traditional bootloader.
     If you see infinite CPU resets with raspi3b machine, try:
     --machine uefi (for UEFI images) or --machine virt (for better compatibility)
+    
+NIX ENVIRONMENT SETUP:
+    For UEFI support in Nix environment, ensure your flake.nix includes:
+    pkgs.OVMF  # UEFI firmware for ARM64 emulation
+    Then run: nix develop
 
 CONSOLE TROUBLESHOOTING:
     If you see no console output with any machine or console mode:
@@ -260,14 +265,31 @@ elif [[ "$MACHINE_TYPE" == "uefi" ]]; then
     MACHINE_TYPE="virt"  # Override to use virt for UEFI
     QEMU_CMD[1]="-machine"  # Update the machine parameter
     QEMU_CMD[2]="virt"      # Set to virt
-    # Add UEFI firmware support with fallback
+    # Add UEFI firmware support with Nix-aware path detection
+    UEFI_FIRMWARE=""
+    
+    # Try standard Linux paths first
     if [[ -f "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd" ]]; then
-        QEMU_CMD+=(-bios /usr/share/qemu-efi-aarch64/QEMU_EFI.fd)
+        UEFI_FIRMWARE="/usr/share/qemu-efi-aarch64/QEMU_EFI.fd"
     elif [[ -f "/usr/share/qemu/AAVMF_CODE.fd" ]]; then
-        QEMU_CMD+=(-bios /usr/share/qemu/AAVMF_CODE.fd)
+        UEFI_FIRMWARE="/usr/share/qemu/AAVMF_CODE.fd"
+    # Try Nix store paths (search dynamically)
+    elif [[ -n "$(find /nix/store -name "QEMU_EFI.fd" 2>/dev/null | head -1)" ]]; then
+        UEFI_FIRMWARE="$(find /nix/store -name "QEMU_EFI.fd" 2>/dev/null | head -1)"
+    elif [[ -n "$(find /nix/store -name "AAVMF_CODE.fd" 2>/dev/null | head -1)" ]]; then
+        UEFI_FIRMWARE="$(find /nix/store -name "AAVMF_CODE.fd" 2>/dev/null | head -1)"
+    # Try OVMF paths in Nix store
+    elif [[ -n "$(find /nix/store -path "*/OVMF/*" -name "*.fd" 2>/dev/null | grep -i aarch64 | head -1)" ]]; then
+        UEFI_FIRMWARE="$(find /nix/store -path "*/OVMF/*" -name "*.fd" 2>/dev/null | grep -i aarch64 | head -1)"
+    fi
+    
+    if [[ -n "$UEFI_FIRMWARE" ]]; then
+        echo "✅ Found UEFI firmware: $UEFI_FIRMWARE"
+        QEMU_CMD+=(-bios "$UEFI_FIRMWARE")
     else
         echo "⚠️  UEFI firmware not found, falling back to standard virt machine"
         echo "   Install qemu-efi-aarch64 package for UEFI support"
+        echo "   In Nix environment, add pkgs.OVMF to your flake.nix packages"
     fi
     # Use virtio block device for UEFI
     QEMU_CMD+=(-drive "if=virtio,format=raw,file=$DISK_IMAGE")
