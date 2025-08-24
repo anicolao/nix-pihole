@@ -128,31 +128,68 @@ setup_nix_container() {
         return 0
     fi
     
-    # Use a simple approach with a standard Ubuntu image and install what we need
-    log_info "Creating new Nix container using Ubuntu base with SSH pre-installed..."
+    # Use the official nixos/nix image which already has Nix properly configured
+    log_info "Creating new Nix container using official nixos/nix image..."
     
-    # Start Ubuntu container with SSH already available
+    # Start the container with a simple command to keep it running
     docker run -d \
         --name "$CONTAINER_NAME" \
         --platform linux/aarch64 \
         --privileged \
         -p 2222:22 \
-        ubuntu:22.04 \
-        sh -c '
-        # Install SSH server, curl, and xz-utils (needed for Nix installer)
-        apt-get update -qq && apt-get install -y -qq openssh-server curl sudo xz-utils
+        nixos/nix:latest \
+        tail -f /dev/null
+    
+    log_info "Container started, installing and configuring SSH..."
+    
+    # Install openssh and configure it properly using Nix
+    docker exec "$CONTAINER_NAME" sh -c '
+        # Install openssh via nix-env
+        nix-env -i openssh
         
-        # Configure SSH properly
-        mkdir -p /var/run/sshd /root/.ssh
-        sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin yes/" /etc/ssh/sshd_config
-        sed -i "s/#PubkeyAuthentication yes/PubkeyAuthentication yes/" /etc/ssh/sshd_config
+        # Create necessary directories
+        mkdir -p /var/run/sshd /root/.ssh /etc/ssh
         
-        # Install Nix (single-user mode for simplicity)
-        curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
+        # Generate host keys if they do not exist
+        if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+            ~/.nix-profile/bin/ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N ""
+        fi
+        if [ ! -f /etc/ssh/ssh_host_ecdsa_key ]; then
+            ~/.nix-profile/bin/ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N ""
+        fi
+        if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+            ~/.nix-profile/bin/ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
+        fi
         
-        # Configure Nix environment
-        echo "source /root/.nix-profile/etc/profile.d/nix.sh" >> /root/.bashrc
-        . /root/.nix-profile/etc/profile.d/nix.sh
+        # Create a minimal SSH configuration
+        cat > /etc/ssh/sshd_config << EOF
+# Basic SSH configuration
+Port 22
+PermitRootLogin yes
+PubkeyAuthentication yes
+PasswordAuthentication no
+StrictModes no
+UsePAM no
+
+# Host key locations
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key  
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+# Disable some features for simplicity
+UseDNS no
+X11Forwarding no
+PrintMotd no
+EOF
+        
+        # Test SSH configuration
+        if ~/.nix-profile/bin/sshd -T -f /etc/ssh/sshd_config >/dev/null 2>&1; then
+            echo "SSH configuration test passed"
+        else
+            echo "SSH configuration test failed"
+            ~/.nix-profile/bin/sshd -T -f /etc/ssh/sshd_config
+            exit 1
+        fi
         
         # Configure Nix for remote building
         mkdir -p /etc/nix
@@ -161,59 +198,19 @@ experimental-features = nix-command flakes
 trusted-users = root
 sandbox = false
 EOF
-        
-        # Start SSH daemon and keep container running
-        /usr/sbin/sshd -D &
-        
-        # Keep container alive
-        tail -f /dev/null
-        '
+    '
     
-    # Wait for installation to complete
-    log_info "Waiting for container setup to complete..."
-    log_info "This may take a few minutes for Nix installation..."
-    
-    # Wait and check periodically if container is still running
-    local setup_time=0
-    local max_setup_time=300  # 5 minutes max for setup
-    
-    while [[ $setup_time -lt $max_setup_time ]]; do
-        if ! docker ps | grep -q "$CONTAINER_NAME"; then
-            log_error "Container exited during setup"
-            log_info "Container logs:"
-            docker logs "$CONTAINER_NAME" 2>&1 | tail -30
-            return 1
-        fi
-        
-        # Check if SSH is ready every 15 seconds
-        if [[ $((setup_time % 15)) -eq 0 ]] && [[ $setup_time -gt 30 ]]; then
-            if nc -z localhost 2222 >/dev/null 2>&1; then
-                log_info "SSH port is ready, setup likely complete"
-                break
-            fi
-        fi
-        
-        if [[ $((setup_time % 30)) -eq 0 ]] && [[ $setup_time -gt 0 ]]; then
-            log_info "Still setting up container... (${setup_time}s/${max_setup_time}s)"
-        fi
-        
-        sleep 5
-        setup_time=$((setup_time + 5))
-    done
-    
-    # Verify final state
-    if ! docker ps | grep -q "$CONTAINER_NAME"; then
-        log_error "Container setup failed - container not running"
-        return 1
-    fi
-    
-    # Add SSH key
+    # Add SSH key to the container
     log_info "Adding SSH public key to container..."
     docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
     docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
     docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
     
-    log_success "Ubuntu container with Nix and SSH is ready"
+    # Start SSH daemon
+    log_info "Starting SSH daemon..."
+    docker exec -d "$CONTAINER_NAME" sh -c '~/.nix-profile/bin/sshd -D -f /etc/ssh/sshd_config'
+    
+    log_success "NixOS container with SSH is ready"
 }
 
 wait_for_container_ready() {
@@ -278,7 +275,7 @@ configure_nix_remote_builder() {
     
     # Test the connection
     log_info "Testing remote builder connection..."
-    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'source /root/.nix-profile/etc/profile.d/nix.sh && nix --version' &> /dev/null; then
+    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'nix --version' &> /dev/null; then
         log_success "Remote builder connection successful"
     else
         log_error "Failed to connect to remote builder"
