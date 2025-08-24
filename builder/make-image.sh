@@ -11,6 +11,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Configure Docker to use Colima
+export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+
 echo "Pi-hole RPi4 Image Builder" >&2
 echo "=========================" >&2
 echo >&2

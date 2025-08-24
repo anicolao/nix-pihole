@@ -8,6 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINER_NAME="nix-remote-builder"
 SSH_KEY_PATH="$HOME/.ssh/nix-remote-builder"
 
+# Configure Docker to use Colima
+export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

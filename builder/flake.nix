@@ -27,11 +27,17 @@
             bash
             curl
             jq
+            netcat
+            openssh
           ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             # macOS specific packages if needed
           ];
 
           shellHook = ''
+            # Point the Docker CLI to the socket managed by Colima
+            export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+            echo "✅ DOCKER_HOST automatically set to Colima's socket."
+            echo
             echo "Pi-hole RPi4 Image Builder Environment"
             echo "======================================"
             echo
