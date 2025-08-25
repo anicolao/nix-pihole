@@ -8,10 +8,13 @@
 
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system: let
+      # Use host system for building tools and scripts
+      pkgs = nixpkgs.legacyPackages.${system};
+      
       # Always build Docker image for aarch64-linux to match Colima target
       # This prevents "exec format error" when running on macOS with Colima
       targetSystem = "aarch64-linux";
-      pkgs = nixpkgs.legacyPackages.${targetSystem};
+      targetPkgs = nixpkgs.legacyPackages.${targetSystem};
       
       # Create essential system files that Docker needs to find the root user
       passwdFile = pkgs.writeTextFile {
@@ -114,7 +117,7 @@ EOF
           # Copy packages and system files to root filesystem
           copyToRoot = pkgs.buildEnv {
             name = "image-root";
-            paths = with pkgs; [
+            paths = with targetPkgs; [
               bash
               coreutils
               openssh
@@ -123,13 +126,13 @@ EOF
               gnutar
               gzip
               xz
+            ] ++ [
+              # Build scripts and system files with host system
               entrypoint
-              # Essential system files that Docker needs
               passwdFile
               groupFile
               shadowFile
               nixConfig
-              # SSH directory structure (no custom config)
               sshDir
             ];
           };
