@@ -128,6 +128,9 @@ exec ${targetPkgs.openssh}/bin/sshd -D
               bash
               coreutils
               gnugrep  # Add grep utility for container checks
+              procps   # Add ps command for process monitoring
+              nettools # Add netstat command for network monitoring
+              netcat   # Add netcat for network testing
               openssh
               nix
               git

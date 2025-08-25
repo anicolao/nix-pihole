@@ -354,12 +354,24 @@ test_ssh_authentication() {
     log_info "Testing SSH key authentication..."
     
     while [[ $attempt -le $max_attempts ]]; do
-        if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes root@localhost -p 2222 'echo "SSH authentication successful"' >/dev/null 2>&1; then
+        # Capture SSH error output for debugging
+        local ssh_output
+        ssh_output=$(ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes -v root@localhost -p 2222 'echo "SSH authentication successful"' 2>&1)
+        local ssh_exit_code=$?
+        
+        if [[ $ssh_exit_code -eq 0 ]]; then
             log_success "SSH key authentication is working"
             return 0
         fi
         
-        log_warning "SSH authentication attempt $attempt/$max_attempts failed"
+        log_warning "SSH authentication attempt $attempt/$max_attempts failed (exit code: $ssh_exit_code)"
+        
+        # Show SSH error details for debugging
+        if [[ $attempt -eq 1 ]]; then
+            log_info "SSH error details:"
+            echo "$ssh_output" | grep -E "(debug1|Permission denied|Authentication|Connection)" || echo "No specific SSH errors found"
+        fi
+        
         if [[ $attempt -lt $max_attempts ]]; then
             log_info "Retrying in 2 seconds..."
             sleep 2
@@ -376,13 +388,29 @@ test_ssh_authentication() {
         ps aux | grep sshd | grep -v grep || echo "No sshd process found"
         
         echo "=== SSH Configuration Test ==="
-        /nix/var/nix/profiles/default/bin/sshd -T 2>&1 || echo "SSH config test failed"
+        # Find the correct sshd path
+        SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
+        if [ -n "$SSHD_PATH" ]; then
+            echo "Found sshd at: $SSHD_PATH"
+            "$SSHD_PATH" -T 2>&1 || echo "SSH config test failed"
+        else
+            echo "Could not find sshd binary"
+        fi
         
         echo "=== Network Status ==="  
         netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
         
-        echo "=== SSH Log Check ==="
-        journalctl -u ssh --no-pager --lines=10 2>/dev/null || echo "No SSH service logs available"
+        echo "=== SSH Key Debug ==="
+        echo "Authorized keys file:"
+        ls -la /root/.ssh/authorized_keys || echo "No authorized_keys file"
+        echo "Authorized keys content:"
+        cat /root/.ssh/authorized_keys 2>/dev/null | head -1 | cut -c1-50 || echo "Cannot read authorized_keys"
+        echo "SSH directory permissions:"
+        ls -la /root/.ssh/ || echo "No SSH directory"
+        
+        echo "=== SSH Internal Port Test ==="
+        # Check if SSH is actually running by testing the port internally
+        echo "quit" | timeout 3 nc localhost 22 2>/dev/null | head -1 || echo "SSH port not responding internally"
     '
     
     return 1
