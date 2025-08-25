@@ -30,101 +30,23 @@
             gnused
             gawk
             
-            # SSH server
+            # SSH server and related tools
             openssh
+            shadow
             
             # Nix package manager
             nix
             
-            # System utilities
-            shadow  # for user management
-            glibc
-            
-            # Network tools for debugging
-            nettools
-            iproute2
+            # Network tools
+            inetutils
             procps
-            
-            # Create the setup script as a package
-            (writeScript "setup-ssh.sh" ''
-              #!/bin/bash
-              set -euo pipefail
-              
-              echo "Setting up SSH server..."
-              
-              # Create required directories
-              mkdir -p /etc/ssh /var/run/sshd /var/empty /root/.ssh /root/.config/nix
-              
-              # Create system users if they don't exist
-              if ! getent group sshd > /dev/null; then
-                groupadd -r sshd
-              fi
-              if ! getent passwd sshd > /dev/null; then
-                useradd -r -g sshd -d /var/empty -s /sbin/nologin sshd
-              fi
-              
-              # Generate SSH host keys if they don't exist
-              if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-                echo "Generating SSH host keys..."
-                ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" -q
-                ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N "" -q  
-                ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N "" -q
-              fi
-              
-              # Create SSH configuration
-              cat > /etc/ssh/sshd_config << 'SSHD_EOF'
-              # SSH daemon configuration for Nix remote builder
-              Port 22
-              PermitRootLogin yes
-              PubkeyAuthentication yes
-              PasswordAuthentication no
-              AuthorizedKeysFile /root/.ssh/authorized_keys
-              UsePrivilegeSeparation yes
-              UsePAM no
-              StrictModes no
-              ListenAddress 0.0.0.0
-              
-              # Host keys
-              HostKey /etc/ssh/ssh_host_rsa_key
-              HostKey /etc/ssh/ssh_host_ecdsa_key  
-              HostKey /etc/ssh/ssh_host_ed25519_key
-              
-              # Logging
-              SyslogFacility AUTH
-              LogLevel INFO
-              SSHD_EOF
-              
-              # Set proper permissions
-              chmod 600 /etc/ssh/ssh_host_*_key
-              chmod 644 /etc/ssh/ssh_host_*_key.pub
-              chmod 700 /root/.ssh
-              chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
-              
-              # Create nix.conf
-              cat > /root/.config/nix/nix.conf << 'NIX_EOF'
-              experimental-features = nix-command flakes
-              trusted-users = root
-              sandbox = false
-              substituters = https://cache.nixos.org/
-              trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
-              NIX_EOF
-              
-              # Test SSH configuration
-              echo "Testing SSH configuration..."
-              /bin/sshd -T
-              
-              # Start SSH daemon
-              echo "Starting SSH daemon..."
-              exec /bin/sshd -D
-            '')
           ];
           
           # Configuration for the image
           config = {
             # Set environment variables
             Env = [
-              "PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin:/bin:/usr/bin"
-              "NIX_PATH=nixpkgs=${nixpkgs}"
+              "PATH=/bin:/usr/bin:/nix/var/nix/profiles/default/bin"
               "USER=root"
               "HOME=/root"
             ];
@@ -141,7 +63,67 @@
             User = "root";
             
             # Command to run when container starts
-            Cmd = [ "/bin/setup-ssh.sh" ];
+            Cmd = [ "/bin/bash" "-c" ''
+              set -euo pipefail
+              
+              echo "Setting up SSH server..."
+              
+              # Create required directories
+              mkdir -p /etc/ssh /var/run/sshd /var/empty /root/.ssh /root/.config/nix
+              
+              # Create system users
+              echo "sshd:x:74:" >> /etc/group
+              echo "sshd:x:74:74:SSH daemon:/var/empty:/bin/false" >> /etc/passwd
+              
+              # Generate SSH host keys
+              if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+                echo "Generating SSH host keys..."
+                ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" -q
+                ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N "" -q  
+                ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N "" -q
+                chmod 600 /etc/ssh/ssh_host_*_key
+                chmod 644 /etc/ssh/ssh_host_*_key.pub
+              fi
+              
+              # Create SSH configuration
+              cat > /etc/ssh/sshd_config << 'EOF'
+              Port 22
+              PermitRootLogin yes
+              PubkeyAuthentication yes
+              PasswordAuthentication no
+              AuthorizedKeysFile /root/.ssh/authorized_keys
+              UsePrivilegeSeparation no
+              UsePAM no
+              StrictModes no
+              ListenAddress 0.0.0.0
+              HostKey /etc/ssh/ssh_host_rsa_key
+              HostKey /etc/ssh/ssh_host_ecdsa_key  
+              HostKey /etc/ssh/ssh_host_ed25519_key
+              SyslogFacility AUTH
+              LogLevel INFO
+              EOF
+              
+              # Set proper permissions
+              chmod 700 /root/.ssh
+              chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
+              
+              # Create nix.conf
+              cat > /root/.config/nix/nix.conf << 'EOF'
+              experimental-features = nix-command flakes
+              trusted-users = root
+              sandbox = false
+              substituters = https://cache.nixos.org/
+              trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+              EOF
+              
+              # Test SSH configuration
+              echo "Testing SSH configuration..."
+              /bin/sshd -T
+              
+              # Start SSH daemon
+              echo "Starting SSH daemon..."
+              exec /bin/sshd -D
+            '' ];
           };
         };
       };
