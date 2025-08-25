@@ -385,59 +385,100 @@ test_ssh_authentication() {
         
         # Capture and display sshd logs after authentication failure
         log_info "Checking sshd logs for this authentication failure..."
-        docker exec "$CONTAINER_NAME" bash -c '
-            echo "=== Recent sshd log entries (last 20 lines) ==="
-            # Try multiple log sources that might contain sshd logs
+        echo "=== Container Log Analysis ==="
+        
+        # First, check if the container is still running
+        if ! docker exec "$CONTAINER_NAME" echo "Container is accessible" >/dev/null 2>&1; then
+            log_warning "Container is not accessible for log inspection"
+        else
+            # Check basic system logs
+            log_info "Checking system logs..."
+            docker exec "$CONTAINER_NAME" sh -c '
+                echo "=== System processes ==="
+                ps aux 2>/dev/null | head -10
+                
+                echo "=== SSH processes ==="
+                ps aux 2>/dev/null | grep -E "(sshd|ssh)" | grep -v grep || echo "No SSH processes found"
+                
+                echo "=== Network status ==="
+                netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
+            ' 2>/dev/null || log_warning "Failed to get basic system status"
             
-            # Check if journalctl is available (systemd-based)
-            if command -v journalctl >/dev/null 2>&1; then
-                echo "--- From journalctl (last 10 entries) ---"
-                journalctl -u ssh -n 10 --no-pager 2>/dev/null || echo "No journalctl SSH service logs found"
-                echo "--- From journalctl sshd process (last 10 entries) ---"
-                journalctl _COMM=sshd -n 10 --no-pager 2>/dev/null || echo "No journalctl sshd process logs found"
-            fi
-            
-            # Check common syslog locations
-            for logfile in /var/log/auth.log /var/log/secure /var/log/messages /var/log/syslog; do
-                if [ -f "$logfile" ]; then
-                    echo "--- From $logfile (last 10 sshd entries) ---"
-                    tail -100 "$logfile" 2>/dev/null | grep -i sshd | tail -10 || echo "No recent sshd entries in $logfile"
+            # Check for systemd journal logs
+            log_info "Checking systemd logs..."
+            docker exec "$CONTAINER_NAME" sh -c '
+                if command -v journalctl >/dev/null 2>&1; then
+                    echo "=== SSH service logs (journalctl) ==="
+                    journalctl -u ssh -u sshd --no-pager -n 20 2>/dev/null || echo "No systemd SSH logs found"
+                    
+                    echo "=== Authentication logs (journalctl) ==="
+                    journalctl _COMM=sshd --no-pager -n 20 2>/dev/null || echo "No sshd process logs found"
+                else
+                    echo "journalctl not available"
                 fi
-            done
+            ' 2>/dev/null || log_warning "Failed to get systemd logs"
             
-            # Check container logs (Docker logs)
-            echo "--- Checking container stdout/stderr for SSH messages ---"
-            # Since we'\''re inside the container, we can'\''t access docker logs directly
-            # But we can check if sshd is logging to stdout/stderr
+            # Check traditional syslog files
+            log_info "Checking syslog files..."
+            docker exec "$CONTAINER_NAME" sh -c '
+                echo "=== Checking traditional log files ==="
+                for logfile in /var/log/auth.log /var/log/secure /var/log/messages /var/log/syslog; do
+                    if [ -f "$logfile" ]; then
+                        echo "--- Last 5 sshd entries from $logfile ---"
+                        grep -i sshd "$logfile" 2>/dev/null | tail -5 || echo "No sshd entries in $logfile"
+                    fi
+                done
+                
+                echo "=== Checking log directory contents ==="
+                ls -la /var/log/ 2>/dev/null | head -10 || echo "Cannot access /var/log"
+            ' 2>/dev/null || log_warning "Failed to check syslog files"
             
-            # Check if there are any SSH-related logs in dmesg
-            echo "--- From dmesg (SSH related) ---"
-            dmesg 2>/dev/null | grep -i ssh | tail -5 || echo "No SSH entries in dmesg"
-            
-            # Check if sshd is running with debug mode and logs are going somewhere
-            echo "--- Current sshd processes and their arguments ---"
-            ps aux | grep sshd | grep -v grep || echo "No sshd processes found"
-            
-            # If no logs found anywhere, suggest enabling debug logging
-            echo "--- Checking if sshd debug logging is enabled ---"
-            SSHD_CONFIG="/etc/ssh/sshd_config"
-            if [ -f "$SSHD_CONFIG" ]; then
-                grep -i "loglevel\|syslogfacility" "$SSHD_CONFIG" 2>/dev/null || echo "No logging configuration found in sshd_config"
-            else
-                echo "No sshd_config file found at $SSHD_CONFIG"
-            fi
-        ' || log_warning "Failed to capture sshd logs from container"
+            # Check SSH configuration
+            log_info "Checking SSH configuration..."
+            docker exec "$CONTAINER_NAME" sh -c '
+                echo "=== SSH daemon configuration test ==="
+                SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
+                if [ -n "$SSHD_PATH" ]; then
+                    echo "Found sshd at: $SSHD_PATH"
+                    "$SSHD_PATH" -T 2>&1 || echo "SSH config test failed"
+                else
+                    echo "Could not find sshd binary"
+                fi
+                
+                echo "=== SSH configuration file ==="
+                if [ -f /etc/ssh/sshd_config ]; then
+                    echo "--- Logging settings in sshd_config ---"
+                    grep -E "LogLevel|SyslogFacility" /etc/ssh/sshd_config 2>/dev/null || echo "No logging settings found"
+                    echo "--- Authentication settings in sshd_config ---"
+                    grep -E "PubkeyAuthentication|PasswordAuthentication|PermitRootLogin" /etc/ssh/sshd_config 2>/dev/null || echo "No auth settings found"
+                else
+                    echo "No sshd_config file found"
+                fi
+            ' 2>/dev/null || log_warning "Failed to check SSH configuration"
+        fi
         
         # Also check Docker container logs from outside the container
+        echo ""
         log_info "Checking Docker container logs for SSH-related messages..."
-        echo "=== Docker container logs (last 20 lines, SSH related) ==="
-        if docker logs "$CONTAINER_NAME" --tail 50 2>&1 | grep -i -E "(ssh|auth|login|connection|denied)" | tail -10; then
-            echo "--- Found SSH-related entries in Docker logs ---"
+        echo "=== Docker Container Logs Analysis ==="
+        
+        # Get all container logs
+        echo "--- All container logs (last 30 lines) ---"
+        if docker logs "$CONTAINER_NAME" --tail 30 2>&1; then
+            echo ""
         else
-            echo "No SSH-related entries found in recent Docker logs"
-            echo "=== Last 10 lines of all Docker logs ==="
-            docker logs "$CONTAINER_NAME" --tail 10 2>&1 || echo "Failed to get Docker logs"
+            log_warning "Failed to get Docker container logs"
         fi
+        
+        # Look specifically for SSH-related messages
+        echo "--- SSH-related messages in container logs ---"
+        if docker logs "$CONTAINER_NAME" 2>&1 | grep -i -E "(ssh|auth|login|connection|denied|error|fail)" | tail -10; then
+            echo ""
+        else
+            echo "No SSH-related entries found in Docker logs"
+        fi
+        
+        echo "=== End of Log Analysis ==="
         
         if [[ $attempt -lt $max_attempts ]]; then
             log_info "Retrying in 2 seconds..."
@@ -585,7 +626,13 @@ main() {
     setup_nix_container
     wait_for_ssh_banner
     fix_ssh_permissions
-    test_ssh_authentication
+    
+    # Test SSH authentication - handle failure gracefully to show logs
+    if ! test_ssh_authentication; then
+        log_error "SSH authentication failed. Please check the logs above for details."
+        exit 1
+    fi
+    
     configure_nix_remote_builder
     print_usage_instructions
 }
