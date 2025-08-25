@@ -26,6 +26,11 @@
         echo "root:x:0:0:root:/root:/bin/bash" > /etc/passwd
         echo "sshd:x:74:74:SSH daemon:/var/empty:/bin/false" >> /etc/passwd
         
+        # Create shadow file for password authentication
+        echo "root:!:19000:0:99999:7:::" > /etc/shadow
+        echo "sshd:!:19000:0:99999:7:::" >> /etc/shadow
+        chmod 640 /etc/shadow
+        
         # Generate SSH host keys
         if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
           echo "Generating SSH host keys..."
@@ -90,6 +95,10 @@
               coreutils
               openssh
               nix
+              git
+              gnutar
+              gzip
+              xz
               entrypoint
             ];
           };
