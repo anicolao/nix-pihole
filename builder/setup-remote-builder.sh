@@ -239,6 +239,20 @@ setup_nix_container() {
     log_info "Waiting for container initialization..."
     sleep 10
     
+    # Wait for SSH service to be ready and ensure directory exists
+    log_info "Waiting for SSH service to start..."
+    for i in {1..30}; do
+        if docker exec "$CONTAINER_NAME" test -d /root/.ssh; then
+            log_success "SSH directory is ready"
+            break
+        fi
+        if [ $i -eq 30 ]; then
+            log_error "SSH directory not created after 30 attempts"
+            exit 1
+        fi
+        sleep 1
+    done
+    
     # Add SSH key to the container
     log_info "Adding SSH public key to container..."
     docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
