@@ -20,8 +20,10 @@
         # Create required directories
         mkdir -p /etc/ssh /var/run/sshd /var/empty /root/.ssh /root/.config/nix
         
-        # Create system users
+        # Create system users and groups
+        echo "root:x:0:" > /etc/group
         echo "sshd:x:74:" >> /etc/group
+        echo "root:x:0:0:root:/root:/bin/bash" > /etc/passwd
         echo "sshd:x:74:74:SSH daemon:/var/empty:/bin/false" >> /etc/passwd
         
         # Generate SSH host keys
