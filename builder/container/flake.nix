@@ -8,7 +8,10 @@
 
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
+      # Always build Docker image for aarch64-linux to match Colima target
+      # This prevents "exec format error" when running on macOS with Colima
+      targetSystem = "aarch64-linux";
+      pkgs = nixpkgs.legacyPackages.${targetSystem};
       
       # Create essential system files that Docker needs to find the root user
       passwdFile = pkgs.writeTextFile {
