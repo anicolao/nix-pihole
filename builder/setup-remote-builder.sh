@@ -253,11 +253,17 @@ setup_nix_container() {
         sleep 1
     done
     
-    # Add SSH key to the container
+    # Add SSH key to the container with proper ownership
     log_info "Adding SSH public key to container..."
     docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
-    docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
-    docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
+    
+    # Set proper ownership and permissions immediately after copying
+    docker exec "$CONTAINER_NAME" bash -c '
+        chown root:root /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        chmod 700 /root/.ssh
+        chown root:root /root/.ssh
+    '
     
     # Verify the container is ready
     log_info "Verifying container setup..."
@@ -278,40 +284,107 @@ setup_nix_container() {
     log_success "Container with pre-configured Nix and SSH service is ready"
 }
 
-wait_for_container_ready() {
+wait_for_ssh_banner() {
     local max_wait=60
     local wait_time=0
     
-    log_info "Waiting for container to be ready..."
+    log_info "Waiting for SSH service to start (checking banner)..."
     
     while [[ $wait_time -lt $max_wait ]]; do
-        # First check if the port is open using netcat
+        # Test SSH banner using netcat or telnet - this is a lower level test
+        local ssh_banner=""
         if command -v nc >/dev/null 2>&1; then
-            if nc -z localhost 2222 >/dev/null 2>&1; then
-                # Port is open, now test actual SSH connectivity
-                if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=2 -o BatchMode=yes root@localhost -p 2222 exit >/dev/null 2>&1; then
-                    log_success "Container SSH is ready after ${wait_time}s"
-                    return 0
-                fi
-            fi
-        else
-            # Fallback to SSH test only if netcat is not available
-            if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=2 -o BatchMode=yes root@localhost -p 2222 exit >/dev/null 2>&1; then
-                log_success "Container SSH is ready after ${wait_time}s"
-                return 0
-            fi
+            # Use netcat to get SSH banner
+            ssh_banner=$(echo "quit" | timeout 3 nc localhost 2222 2>/dev/null | head -1 || true)
+        elif command -v telnet >/dev/null 2>&1; then
+            # Fallback to telnet if netcat is not available
+            ssh_banner=$(echo "quit" | timeout 3 telnet localhost 2222 2>/dev/null | grep "SSH-" || true)
+        fi
+        
+        # Check if we got a valid SSH banner (should start with "SSH-")
+        if [[ "$ssh_banner" =~ ^SSH- ]]; then
+            log_success "SSH service is responding with banner: $ssh_banner"
+            return 0
         fi
         
         # Print status update every 5 seconds to avoid spam
         if [[ $((wait_time % 5)) -eq 0 ]] && [[ $wait_time -gt 0 ]]; then
-            log_info "Still waiting for container SSH... (${wait_time}s/${max_wait}s)"
+            log_info "Still waiting for SSH service... (${wait_time}s/${max_wait}s)"
         fi
         
         sleep 1
         wait_time=$((wait_time + 1))
     done
     
-    log_error "Container SSH failed to become ready within ${max_wait} seconds"
+    log_error "SSH service failed to start within ${max_wait} seconds"
+    return 1
+}
+
+fix_ssh_permissions() {
+    log_info "Checking and fixing SSH permissions..."
+    
+    # Ensure proper ownership and permissions for SSH directories and files
+    docker exec "$CONTAINER_NAME" bash -c '
+        # Fix ownership - everything should be owned by root:root
+        chown -R root:root /root/.ssh/ 2>/dev/null || true
+        chown root:root /etc/ssh/ssh_host_*key* 2>/dev/null || true
+        
+        # Fix directory permissions
+        chmod 700 /root/.ssh 2>/dev/null || true
+        chmod 755 /etc/ssh 2>/dev/null || true
+        
+        # Fix file permissions
+        chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
+        chmod 600 /etc/ssh/ssh_host_*key 2>/dev/null || true
+        chmod 644 /etc/ssh/ssh_host_*key.pub 2>/dev/null || true
+        
+        # Verify critical permissions
+        echo "=== SSH Permission Status ==="
+        ls -la /root/.ssh/ 2>/dev/null || echo "No /root/.ssh directory"
+        ls -la /etc/ssh/ssh_host_*key* 2>/dev/null || echo "No SSH host keys found"
+    '
+    
+    log_success "SSH permissions fixed"
+}
+
+test_ssh_authentication() {
+    local max_attempts=3
+    local attempt=1
+    
+    log_info "Testing SSH key authentication..."
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes root@localhost -p 2222 'echo "SSH authentication successful"' >/dev/null 2>&1; then
+            log_success "SSH key authentication is working"
+            return 0
+        fi
+        
+        log_warning "SSH authentication attempt $attempt/$max_attempts failed"
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_info "Retrying in 2 seconds..."
+            sleep 2
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    log_error "SSH key authentication failed after $max_attempts attempts"
+    
+    # Provide debugging information
+    log_info "Debugging SSH connection..."
+    docker exec "$CONTAINER_NAME" bash -c '
+        echo "=== SSH Service Status ==="
+        ps aux | grep sshd | grep -v grep || echo "No sshd process found"
+        
+        echo "=== SSH Configuration Test ==="
+        /nix/var/nix/profiles/default/bin/sshd -T 2>&1 || echo "SSH config test failed"
+        
+        echo "=== Network Status ==="  
+        netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
+        
+        echo "=== SSH Log Check ==="
+        journalctl -u ssh --no-pager --lines=10 2>/dev/null || echo "No SSH service logs available"
+    '
+    
     return 1
 }
 
@@ -402,7 +475,9 @@ main() {
     setup_ssh_key
     start_colima
     setup_nix_container
-    wait_for_container_ready
+    wait_for_ssh_banner
+    fix_ssh_permissions
+    test_ssh_authentication
     configure_nix_remote_builder
     print_usage_instructions
 }

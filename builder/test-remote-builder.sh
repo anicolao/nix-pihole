@@ -100,19 +100,105 @@ test_remote_builder_config() {
     fi
 }
 
-test_container_ssh_connection() {
-    log_info "Testing SSH connection to container..."
+test_ssh_banner() {
+    log_info "Testing SSH service banner..."
+    
+    local ssh_banner=""
+    if command -v nc >/dev/null 2>&1; then
+        # Use netcat to get SSH banner
+        ssh_banner=$(echo "quit" | timeout 3 nc localhost 2222 2>/dev/null | head -1 || true)
+    elif command -v telnet >/dev/null 2>&1; then
+        # Fallback to telnet if netcat is not available
+        ssh_banner=$(echo "quit" | timeout 3 telnet localhost 2222 2>/dev/null | grep "SSH-" || true)
+    fi
+    
+    if [[ "$ssh_banner" =~ ^SSH- ]]; then
+        log_success "SSH service is responding with banner: $ssh_banner"
+        return 0
+    else
+        log_warning "SSH service banner test failed"
+        return 1
+    fi
+}
+
+test_ssh_permissions() {
+    log_info "Testing SSH permissions and configuration..."
+    
+    # Test if we can check the permissions inside the container
+    local perm_check
+    perm_check=$(docker exec "$CONTAINER_NAME" bash -c '
+        echo "=== SSH Permission Check ==="
+        
+        # Check /root/.ssh directory
+        if [[ -d /root/.ssh ]]; then
+            perm=$(stat -c "%a" /root/.ssh 2>/dev/null)
+            owner=$(stat -c "%U:%G" /root/.ssh 2>/dev/null)
+            echo "/root/.ssh: permissions=$perm, owner=$owner"
+            if [[ "$perm" != "700" || "$owner" != "root:root" ]]; then
+                echo "ERROR: /root/.ssh has incorrect permissions or ownership"
+                exit 1
+            fi
+        else
+            echo "ERROR: /root/.ssh directory not found"
+            exit 1
+        fi
+        
+        # Check authorized_keys file
+        if [[ -f /root/.ssh/authorized_keys ]]; then
+            perm=$(stat -c "%a" /root/.ssh/authorized_keys 2>/dev/null)
+            owner=$(stat -c "%U:%G" /root/.ssh/authorized_keys 2>/dev/null)
+            echo "/root/.ssh/authorized_keys: permissions=$perm, owner=$owner"
+            if [[ "$perm" != "600" || "$owner" != "root:root" ]]; then
+                echo "ERROR: authorized_keys has incorrect permissions or ownership"
+                exit 1
+            fi
+        else
+            echo "ERROR: /root/.ssh/authorized_keys file not found"
+            exit 1
+        fi
+        
+        # Check SSH host keys
+        for key in /etc/ssh/ssh_host_*key; do
+            if [[ -f "$key" ]]; then
+                perm=$(stat -c "%a" "$key" 2>/dev/null)
+                if [[ "$perm" != "600" ]]; then
+                    echo "ERROR: $key has incorrect permissions: $perm (should be 600)"
+                    exit 1
+                fi
+            fi
+        done
+        
+        echo "All SSH permissions are correct"
+    ' 2>&1)
+    
+    if [[ $? -eq 0 ]]; then
+        log_success "SSH permissions are correct"
+        echo "$perm_check" | grep -v "^===" >&2
+        return 0
+    else
+        log_warning "SSH permissions check failed"
+        echo "$perm_check" >&2
+        return 1
+    fi
+}
+
+test_ssh_authentication() {
+    log_info "Testing SSH key authentication..."
     
     if [[ ! -f "$SSH_KEY_PATH" ]]; then
         log_warning "SSH key not found at $SSH_KEY_PATH"
         return 1
     fi
     
-    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@localhost -p 2222 'echo "SSH test successful"' &> /dev/null; then
-        log_success "SSH connection to container is working"
+    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes root@localhost -p 2222 'echo "SSH authentication successful"' &> /dev/null; then
+        log_success "SSH key authentication is working"
         return 0
     else
-        log_warning "SSH connection to container failed"
+        log_warning "SSH key authentication failed"
+        
+        # Provide some debugging info
+        log_info "Debugging SSH authentication failure..."
+        ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -v root@localhost -p 2222 'echo "test"' 2>&1 | head -10 >&2 || true
         return 1
     fi
 }
@@ -169,6 +255,20 @@ run_all_tests() {
     fi
     echo ""
     
+    # Test SSH banner (low-level test)
+    total_tests=$((total_tests + 1))
+    if test_ssh_banner; then
+        passed_tests=$((passed_tests + 1))
+    fi
+    echo ""
+    
+    # Test SSH permissions
+    total_tests=$((total_tests + 1))
+    if test_ssh_permissions; then
+        passed_tests=$((passed_tests + 1))
+    fi
+    echo ""
+    
     # Test remote builder config
     total_tests=$((total_tests + 1))
     if test_remote_builder_config; then
@@ -176,9 +276,9 @@ run_all_tests() {
     fi
     echo ""
     
-    # Test container SSH connection
+    # Test SSH authentication
     total_tests=$((total_tests + 1))
-    if test_container_ssh_connection; then
+    if test_ssh_authentication; then
         passed_tests=$((passed_tests + 1))
     fi
     echo ""
