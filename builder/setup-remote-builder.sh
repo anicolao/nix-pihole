@@ -272,13 +272,24 @@ setup_nix_container() {
         ps aux | grep -E "(sshd|nix)" || echo "No SSH or Nix processes found"
         
         echo "=== Network Status ==="
-        netstat -tlnp | grep :22 || echo "SSH not listening on port 22"
+        netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
         
         echo "=== Nix Verification ==="
         nix --version || echo "Nix not available"
         
-        echo "=== SSH Config Test ==="
-        /bin/sshd -T || echo "SSH configuration test failed"
+        echo "=== SSH Config Verification ==="
+        # Find and test SSH daemon configuration
+        SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
+        if [ -n "$SSHD_PATH" ]; then
+            echo "Testing SSH config with: $SSHD_PATH"
+            "$SSHD_PATH" -T || echo "SSH configuration test failed"
+        else
+            echo "Could not find SSH daemon"
+        fi
+        
+        echo "=== SSH Key Setup Check ==="
+        ls -la /root/.ssh/ || echo "No SSH directory"
+        test -f /root/.ssh/authorized_keys && echo "Authorized keys file exists" || echo "No authorized keys file"
     '
     
     log_success "Container with pre-configured Nix and SSH service is ready"
@@ -403,10 +414,23 @@ test_ssh_authentication() {
         echo "=== SSH Key Debug ==="
         echo "Authorized keys file:"
         ls -la /root/.ssh/authorized_keys || echo "No authorized_keys file"
-        echo "Authorized keys content:"
+        echo "Authorized keys content (first 50 chars):"
         cat /root/.ssh/authorized_keys 2>/dev/null | head -1 | cut -c1-50 || echo "Cannot read authorized_keys"
+        echo "Authorized keys line count:"
+        wc -l /root/.ssh/authorized_keys 2>/dev/null || echo "Cannot count lines"
         echo "SSH directory permissions:"
         ls -la /root/.ssh/ || echo "No SSH directory"
+        
+        echo "=== SSH Key Validation ==="
+        # Test if the public key is valid
+        if [ -f /root/.ssh/authorized_keys ]; then
+            echo "Testing public key format..."
+            while read -r key; do
+                if [ -n "$key" ]; then
+                    echo "$key" | ssh-keygen -l -f - 2>/dev/null && echo "Key is valid" || echo "Key format issue detected"
+                fi
+            done < /root/.ssh/authorized_keys
+        fi
         
         echo "=== SSH Internal Port Test ==="
         # Check if SSH is actually running by testing the port internally

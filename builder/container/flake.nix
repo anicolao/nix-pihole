@@ -93,10 +93,13 @@ fi
 # Create minimal SSH config with only essential settings for container
 cat > /etc/ssh/sshd_config << 'EOF'
 # Minimal SSH configuration for container use
+Port 22
 PermitRootLogin yes
 PubkeyAuthentication yes
 PasswordAuthentication no
 UsePAM no
+AuthorizedKeysFile /root/.ssh/authorized_keys
+StrictModes yes
 EOF
 
 # Set proper permissions on SSH directories
