@@ -358,6 +358,54 @@ fix_ssh_permissions() {
     log_success "SSH permissions fixed"
 }
 
+capture_sshd_debug_logs() {
+    local log_file="/tmp/sshd_debug_$(date +%s).log"
+    
+    log_info "Temporarily restarting SSH daemon in debug mode to capture authentication logs..."
+    
+    # Stop the current SSH daemon
+    docker exec "$CONTAINER_NAME" bash -c '
+        # Find and stop the current SSH daemon
+        SSHD_PID=$(ps aux | grep -E "sshd.*listener" | grep -v grep | awk "{print \$2}" | head -1)
+        if [ -n "$SSHD_PID" ]; then
+            echo "Stopping SSH daemon with PID: $SSHD_PID"
+            kill "$SSHD_PID"
+            sleep 2
+        fi
+    ' 2>/dev/null || true
+    
+    # Start SSH daemon in debug mode in the background
+    log_info "Starting SSH daemon in debug mode..."
+    docker exec -d "$CONTAINER_NAME" bash -c '
+        SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
+        if [ -n "$SSHD_PATH" ]; then
+            echo "Starting debug SSH daemon at: $SSHD_PATH"
+            "$SSHD_PATH" -D -d -p 22 &> /tmp/sshd_debug.log &
+        else
+            echo "Could not find SSH daemon binary"
+        fi
+    ' 2>/dev/null || log_warning "Failed to start debug SSH daemon"
+    
+    # Give SSH time to start
+    sleep 3
+    
+    # Verify SSH is running in debug mode
+    log_info "Verifying debug SSH daemon is running..."
+    docker exec "$CONTAINER_NAME" bash -c '
+        if ps aux | grep -E "sshd.*-d" | grep -v grep; then
+            echo "Debug SSH daemon is running"
+        else
+            echo "Debug SSH daemon not found, trying to start it..."
+            SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
+            if [ -n "$SSHD_PATH" ]; then
+                nohup "$SSHD_PATH" -D -d -p 22 &> /tmp/sshd_debug.log &
+                sleep 2
+                echo "SSH daemon started with debug logging"
+            fi
+        fi
+    ' 2>/dev/null || true
+}
+
 test_ssh_authentication() {
     local max_attempts=3
     local attempt=1
@@ -365,8 +413,14 @@ test_ssh_authentication() {
     log_info "Testing SSH key authentication..."
     
     while [[ $attempt -le $max_attempts ]]; do
+        # For the first attempt, enable debug logging
+        if [[ $attempt -eq 1 ]]; then
+            capture_sshd_debug_logs
+        fi
+        
         # Capture SSH error output for debugging
         local ssh_output
+        log_info "Attempting SSH connection (attempt $attempt/$max_attempts)..."
         ssh_output=$(ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes -v root@localhost -p 2222 'echo "SSH authentication successful"' 2>&1)
         local ssh_exit_code=$?
         
@@ -377,108 +431,72 @@ test_ssh_authentication() {
         
         log_warning "SSH authentication attempt $attempt/$max_attempts failed (exit code: $ssh_exit_code)"
         
-        # Show SSH error details for debugging
+        # Show SSH client error details for debugging
         if [[ $attempt -eq 1 ]]; then
-            log_info "SSH error details:"
-            echo "$ssh_output" | grep -E "(debug1|Permission denied|Authentication|Connection)" || echo "No specific SSH errors found"
+            log_info "SSH client error details:"
+            echo "$ssh_output" | grep -E "(debug1|Permission denied|Authentication|Connection|refused)" || echo "No specific SSH client errors found"
         fi
         
-        # Capture and display sshd logs after authentication failure
-        log_info "Checking sshd logs for this authentication failure..."
-        echo "=== Container Log Analysis ==="
+        # Capture real-time SSH daemon debug logs
+        log_info "Capturing SSH daemon debug logs for this authentication failure..."
+        echo "=== SSH Daemon Debug Output ==="
         
-        # First, check if the container is still running
-        if ! docker exec "$CONTAINER_NAME" echo "Container is accessible" >/dev/null 2>&1; then
-            log_warning "Container is not accessible for log inspection"
+        # Get the debug logs from the SSH daemon
+        if docker exec "$CONTAINER_NAME" test -f /tmp/sshd_debug.log 2>/dev/null; then
+            echo "--- SSH daemon debug log (last 50 lines) ---"
+            docker exec "$CONTAINER_NAME" tail -50 /tmp/sshd_debug.log 2>/dev/null || echo "Could not read SSH debug log"
+            echo ""
+            
+            # Look for specific authentication-related messages
+            echo "--- Authentication-related entries ---"
+            docker exec "$CONTAINER_NAME" grep -i -E "(auth|key|pubkey|denied|refused|failed|error)" /tmp/sshd_debug.log 2>/dev/null | tail -20 || echo "No authentication messages found in debug log"
+            echo ""
         else
-            # Check basic system logs
-            log_info "Checking system logs..."
-            docker exec "$CONTAINER_NAME" sh -c '
-                echo "=== System processes ==="
-                ps aux 2>/dev/null | head -10
-                
-                echo "=== SSH processes ==="
-                ps aux 2>/dev/null | grep -E "(sshd|ssh)" | grep -v grep || echo "No SSH processes found"
-                
-                echo "=== Network status ==="
-                netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
-            ' 2>/dev/null || log_warning "Failed to get basic system status"
-            
-            # Check for systemd journal logs
-            log_info "Checking systemd logs..."
-            docker exec "$CONTAINER_NAME" sh -c '
-                if command -v journalctl >/dev/null 2>&1; then
-                    echo "=== SSH service logs (journalctl) ==="
-                    journalctl -u ssh -u sshd --no-pager -n 20 2>/dev/null || echo "No systemd SSH logs found"
-                    
-                    echo "=== Authentication logs (journalctl) ==="
-                    journalctl _COMM=sshd --no-pager -n 20 2>/dev/null || echo "No sshd process logs found"
-                else
-                    echo "journalctl not available"
-                fi
-            ' 2>/dev/null || log_warning "Failed to get systemd logs"
-            
-            # Check traditional syslog files
-            log_info "Checking syslog files..."
-            docker exec "$CONTAINER_NAME" sh -c '
-                echo "=== Checking traditional log files ==="
-                for logfile in /var/log/auth.log /var/log/secure /var/log/messages /var/log/syslog; do
-                    if [ -f "$logfile" ]; then
-                        echo "--- Last 5 sshd entries from $logfile ---"
-                        grep -i sshd "$logfile" 2>/dev/null | tail -5 || echo "No sshd entries in $logfile"
-                    fi
-                done
-                
-                echo "=== Checking log directory contents ==="
-                ls -la /var/log/ 2>/dev/null | head -10 || echo "Cannot access /var/log"
-            ' 2>/dev/null || log_warning "Failed to check syslog files"
-            
-            # Check SSH configuration
-            log_info "Checking SSH configuration..."
-            docker exec "$CONTAINER_NAME" sh -c '
-                echo "=== SSH daemon configuration test ==="
-                SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
-                if [ -n "$SSHD_PATH" ]; then
-                    echo "Found sshd at: $SSHD_PATH"
-                    "$SSHD_PATH" -T 2>&1 || echo "SSH config test failed"
-                else
-                    echo "Could not find sshd binary"
-                fi
-                
-                echo "=== SSH configuration file ==="
-                if [ -f /etc/ssh/sshd_config ]; then
-                    echo "--- Logging settings in sshd_config ---"
-                    grep -E "LogLevel|SyslogFacility" /etc/ssh/sshd_config 2>/dev/null || echo "No logging settings found"
-                    echo "--- Authentication settings in sshd_config ---"
-                    grep -E "PubkeyAuthentication|PasswordAuthentication|PermitRootLogin" /etc/ssh/sshd_config 2>/dev/null || echo "No auth settings found"
-                else
-                    echo "No sshd_config file found"
-                fi
-            ' 2>/dev/null || log_warning "Failed to check SSH configuration"
+            log_warning "SSH debug log not found, checking container output instead..."
         fi
         
-        # Also check Docker container logs from outside the container
+        # Also check container stdout/stderr for SSH messages
+        echo "--- Container logs since last attempt ---"
+        docker logs "$CONTAINER_NAME" --since 30s 2>&1 | grep -i -E "(ssh|auth|connection|refused|denied|error)" | tail -10 || echo "No recent SSH messages in container logs"
         echo ""
-        log_info "Checking Docker container logs for SSH-related messages..."
-        echo "=== Docker Container Logs Analysis ==="
         
-        # Get all container logs
-        echo "--- All container logs (last 30 lines) ---"
-        if docker logs "$CONTAINER_NAME" --tail 30 2>&1; then
-            echo ""
-        else
-            log_warning "Failed to get Docker container logs"
-        fi
+        # Check basic connectivity and permission status
+        log_info "Checking SSH setup and permissions..."
+        docker exec "$CONTAINER_NAME" bash -c '
+            echo "=== SSH Service Status ==="
+            ps aux | grep -E "(sshd)" | grep -v grep || echo "No SSH daemon found"
+            
+            echo "=== Network Status ==="  
+            netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
+            
+            echo "=== SSH Key Debug ==="
+            echo "Authorized keys file permissions:"
+            ls -la /root/.ssh/authorized_keys 2>/dev/null || echo "No authorized_keys file"
+            echo "SSH directory permissions:"
+            ls -la /root/.ssh/ 2>/dev/null || echo "No SSH directory"
+            echo "Authorized keys content (first line, first 80 chars):"
+            head -1 /root/.ssh/authorized_keys 2>/dev/null | cut -c1-80 || echo "Cannot read authorized_keys"
+            
+            echo "=== SSH Key Validation ==="
+            if [ -f /root/.ssh/authorized_keys ]; then
+                echo "Testing public key format..."
+                while read -r key; do
+                    if [ -n "$key" ] && [[ ! "$key" =~ ^[[:space:]]*# ]]; then
+                        echo "Key fingerprint: $(echo "$key" | ssh-keygen -l -f - 2>/dev/null || echo "Invalid key format")"
+                    fi
+                done < /root/.ssh/authorized_keys
+            fi
+            
+            echo "=== SSH Configuration Check ==="
+            if [ -f /etc/ssh/sshd_config ]; then
+                echo "Key authentication settings:"
+                grep -E "PubkeyAuthentication|PasswordAuthentication|PermitRootLogin|AuthorizedKeysFile" /etc/ssh/sshd_config 2>/dev/null || echo "No auth settings found in config"
+            else
+                echo "No sshd_config file found"
+            fi
+        ' 2>/dev/null || log_warning "Failed to get SSH debug information"
         
-        # Look specifically for SSH-related messages
-        echo "--- SSH-related messages in container logs ---"
-        if docker logs "$CONTAINER_NAME" 2>&1 | grep -i -E "(ssh|auth|login|connection|denied|error|fail)" | tail -10; then
-            echo ""
-        else
-            echo "No SSH-related entries found in Docker logs"
-        fi
-        
-        echo "=== End of Log Analysis ==="
+        echo "=== End of Authentication Failure Analysis ==="
         
         if [[ $attempt -lt $max_attempts ]]; then
             log_info "Retrying in 2 seconds..."
@@ -489,50 +507,25 @@ test_ssh_authentication() {
     
     log_error "SSH key authentication failed after $max_attempts attempts"
     
-    # Provide debugging information
-    log_info "Debugging SSH connection..."
+    # Final comprehensive debugging
+    log_info "Performing final SSH authentication debugging..."
+    
+    # Try a manual SSH test with maximum verbosity
+    log_info "Testing SSH connection with maximum verbosity..."
+    echo "=== Full SSH Debug Output ==="
+    ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 -vvv root@localhost -p 2222 'echo "SSH test"' 2>&1 | head -50 || true
+    echo ""
+    
+    # Show complete SSH daemon debug log
+    log_info "Complete SSH daemon debug log:"
     docker exec "$CONTAINER_NAME" bash -c '
-        echo "=== SSH Service Status ==="
-        ps aux | grep sshd | grep -v grep || echo "No sshd process found"
-        
-        echo "=== SSH Configuration Test ==="
-        # Find the correct sshd path
-        SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
-        if [ -n "$SSHD_PATH" ]; then
-            echo "Found sshd at: $SSHD_PATH"
-            "$SSHD_PATH" -T 2>&1 || echo "SSH config test failed"
+        if [ -f /tmp/sshd_debug.log ]; then
+            echo "=== Complete SSH Daemon Debug Log ==="
+            cat /tmp/sshd_debug.log
         else
-            echo "Could not find sshd binary"
+            echo "No SSH debug log found"
         fi
-        
-        echo "=== Network Status ==="  
-        netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
-        
-        echo "=== SSH Key Debug ==="
-        echo "Authorized keys file:"
-        ls -la /root/.ssh/authorized_keys || echo "No authorized_keys file"
-        echo "Authorized keys content (first 50 chars):"
-        cat /root/.ssh/authorized_keys 2>/dev/null | head -1 | cut -c1-50 || echo "Cannot read authorized_keys"
-        echo "Authorized keys line count:"
-        wc -l /root/.ssh/authorized_keys 2>/dev/null || echo "Cannot count lines"
-        echo "SSH directory permissions:"
-        ls -la /root/.ssh/ || echo "No SSH directory"
-        
-        echo "=== SSH Key Validation ==="
-        # Test if the public key is valid
-        if [ -f /root/.ssh/authorized_keys ]; then
-            echo "Testing public key format..."
-            while read -r key; do
-                if [ -n "$key" ]; then
-                    echo "$key" | ssh-keygen -l -f - 2>/dev/null && echo "Key is valid" || echo "Key format issue detected"
-                fi
-            done < /root/.ssh/authorized_keys
-        fi
-        
-        echo "=== SSH Internal Port Test ==="
-        # Check if SSH is actually running by testing the port internally
-        echo "quit" | timeout 3 nc localhost 22 2>/dev/null | head -1 || echo "SSH port not responding internally"
-    '
+    ' 2>/dev/null || true
     
     return 1
 }
