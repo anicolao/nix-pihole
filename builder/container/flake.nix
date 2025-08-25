@@ -64,49 +64,55 @@
       };
       
       # Simplified entrypoint script using SSH defaults with minimal required config
-      entrypoint = pkgs.writeScriptBin "entrypoint" ''
-        #!${targetPkgs.bash}/bin/bash
-        set -euo pipefail
-        
-        echo "Starting SSH server setup..."
-        
-        # Create required directories
-        mkdir -p /etc/ssh /var/run/sshd /var/empty /root/.ssh
-        
-        # Set proper permissions on shadow file
-        chmod 640 /etc/shadow
-        
-        # Generate SSH host keys if they don't exist
-        if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-          echo "Generating SSH host keys..."
-          ${targetPkgs.openssh}/bin/ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" -q
-          ${targetPkgs.openssh}/bin/ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N "" -q  
-          ${targetPkgs.openssh}/bin/ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N "" -q
-          chmod 600 /etc/ssh/ssh_host_*_key
-          chmod 644 /etc/ssh/ssh_host_*_key.pub
-        fi
-        
-        # Create minimal SSH config with only essential settings for container
-        cat > /etc/ssh/sshd_config << 'EOF'
+      # Use a simple text file approach to avoid cross-compilation issues
+      entrypoint = pkgs.writeTextFile {
+        name = "entrypoint";
+        text = ''
+          #!/bin/bash
+          set -euo pipefail
+          
+          echo "Starting SSH server setup..."
+          
+          # Create required directories
+          mkdir -p /etc/ssh /var/run/sshd /var/empty /root/.ssh
+          
+          # Set proper permissions on shadow file
+          chmod 640 /etc/shadow
+          
+          # Generate SSH host keys if they don't exist
+          if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+            echo "Generating SSH host keys..."
+            /nix/var/nix/profiles/default/bin/ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" -q
+            /nix/var/nix/profiles/default/bin/ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N "" -q  
+            /nix/var/nix/profiles/default/bin/ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N "" -q
+            chmod 600 /etc/ssh/ssh_host_*_key
+            chmod 644 /etc/ssh/ssh_host_*_key.pub
+          fi
+          
+          # Create minimal SSH config with only essential settings for container
+          cat > /etc/ssh/sshd_config << 'EOF'
 # Minimal SSH configuration for container use
 PermitRootLogin yes
 PubkeyAuthentication yes
 PasswordAuthentication no
 UsePAM no
 EOF
-        
-        # Set proper permissions on SSH directories
-        chmod 700 /root/.ssh
-        chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
-        
-        # Test SSH configuration
-        echo "Testing SSH configuration..."
-        ${targetPkgs.openssh}/bin/sshd -T
-        
-        # Start SSH daemon
-        echo "SSH server ready, starting daemon..."
-        exec ${targetPkgs.openssh}/bin/sshd -D
-      '';
+          
+          # Set proper permissions on SSH directories
+          chmod 700 /root/.ssh
+          chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
+          
+          # Test SSH configuration
+          echo "Testing SSH configuration..."
+          /nix/var/nix/profiles/default/bin/sshd -T
+          
+          # Start SSH daemon
+          echo "SSH server ready, starting daemon..."
+          exec /nix/var/nix/profiles/default/bin/sshd -D
+        '';
+        executable = true;
+        destination = "/bin/entrypoint";
+      };
     in {
       packages = {
         # Docker image with SSH and Nix pre-configured
@@ -152,7 +158,7 @@ EOF
             
             WorkingDir = "/root";
             User = "root";
-            Cmd = [ "${entrypoint}/bin/entrypoint" ];
+            Cmd = [ "/bin/entrypoint" ];
           };
         };
       };
