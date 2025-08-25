@@ -17,6 +17,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Parse command line arguments
+FORCE_REBUILD=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --force-rebuild)
+            FORCE_REBUILD=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $0 [OPTIONS]"
+            echo "Build RPi4 image using Colima remote builder"
+            echo ""
+            echo "Options:"
+            echo "  --force-rebuild  Force rebuild of Docker image even if it exists"
+            echo "  -h, --help       Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
 # Configure Docker to use Colima
 export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 
@@ -44,7 +69,11 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 echo "Setting up remote builder..." >&2
-"$SCRIPT_DIR/setup-remote-builder.sh"
+if [[ "$FORCE_REBUILD" == "true" ]]; then
+    "$SCRIPT_DIR/setup-remote-builder.sh" --force-rebuild
+else
+    "$SCRIPT_DIR/setup-remote-builder.sh"
+fi
 
 echo >&2
 echo "Building RPi4 image..." >&2

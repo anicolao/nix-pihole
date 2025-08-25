@@ -72,6 +72,16 @@ else
     log_info "No Docker container found"
 fi
 
+# Remove Docker images
+log_info "Cleaning up Docker images..."
+if docker images nix-remote-builder:latest --format "table {{.Repository}}:{{.Tag}}" | grep -q "nix-remote-builder:latest"; then
+    log_info "Removing Docker image 'nix-remote-builder:latest'..."
+    docker rmi nix-remote-builder:latest
+    log_success "Removed Docker image"
+else
+    log_info "No Docker image found"
+fi
+
 # Stop and delete Colima
 log_info "Cleaning up Colima..."
 if colima status &>/dev/null; then

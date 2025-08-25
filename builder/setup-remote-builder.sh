@@ -8,6 +8,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINER_NAME="nix-remote-builder"
 SSH_KEY_PATH="$HOME/.ssh/nix-remote-builder"
 
+# Parse command line arguments
+FORCE_REBUILD=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --force-rebuild)
+            FORCE_REBUILD=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $0 [OPTIONS]"
+            echo "Options:"
+            echo "  --force-rebuild  Force rebuild of Docker image even if it exists"
+            echo "  -h, --help       Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
 # Configure Docker to use Colima
 export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 
@@ -142,19 +165,44 @@ start_colima() {
 ensure_docker_image() {
     log_info "Ensuring Nix remote builder Docker image is available..."
     
+    # Force rebuild if requested
+    if [[ "$FORCE_REBUILD" == "true" ]]; then
+        log_info "Force rebuild requested, removing existing image..."
+        docker rmi nix-remote-builder:latest 2>/dev/null || true
+    fi
+    
     # Check if the image already exists
     if docker images nix-remote-builder:latest --format "table {{.Repository}}:{{.Tag}}" | grep -q "nix-remote-builder:latest"; then
         log_info "Docker image 'nix-remote-builder:latest' already exists"
-        return 0
+        
+        # Test if the existing image is working by checking if it has the root user
+        log_info "Testing existing Docker image..."
+        if docker run --rm nix-remote-builder:latest /bin/bash -c 'grep -q "^root:" /etc/passwd && echo "Root user found"' 2>/dev/null | grep -q "Root user found"; then
+            log_success "Existing Docker image appears to be working correctly"
+            return 0
+        else
+            log_warning "Existing Docker image appears to be corrupted (missing root user)"
+            log_info "Removing corrupted image and rebuilding..."
+            docker rmi nix-remote-builder:latest || true
+        fi
     fi
     
-    log_info "Docker image not found. Building it now..."
+    log_info "Docker image not found or corrupted. Building it now..."
     log_info "This may take several minutes on first run..."
     
     # Build the image using the container build script
     if [[ -f "$SCRIPT_DIR/container/build-image.sh" ]]; then
         if "$SCRIPT_DIR/container/build-image.sh"; then
             log_success "Docker image built successfully"
+            
+            # Verify the newly built image
+            log_info "Verifying newly built image..."
+            if docker run --rm nix-remote-builder:latest /bin/bash -c 'grep -q "^root:" /etc/passwd && echo "Root user found"' 2>/dev/null | grep -q "Root user found"; then
+                log_success "New Docker image verified successfully"
+            else
+                log_error "New Docker image verification failed - root user not found"
+                exit 1
+            fi
         else
             log_error "Failed to build Docker image"
             exit 1
@@ -313,6 +361,13 @@ print_usage_instructions() {
     echo "4. To restart the remote builder later:"
     echo "   $0"
     echo ""
+    echo "5. To force rebuild the Docker image:"
+    echo "   $0 --force-rebuild"
+    echo ""
+    echo "6. If you encounter issues, clean up completely and try again:"
+    echo "   ./builder/cleanup.sh"
+    echo "   $0"
+    echo ""
     log_info "The remote builder will automatically be used for aarch64-linux builds."
 }
 
@@ -340,5 +395,5 @@ main() {
 
 # Run main function if script is executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
+    main
 fi

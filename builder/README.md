@@ -71,6 +71,20 @@ Host (macOS)          Container (aarch64-linux)
 
 ## Troubleshooting
 
+### Docker Image Issues
+If you encounter "unable to find user root" or other Docker image issues, the problem may be an outdated or corrupted Docker image. The cleanup script now removes Docker images as well as containers:
+
+```bash
+# Complete cleanup including Docker images
+./builder/cleanup.sh
+
+# Force rebuild of Docker image
+nix develop ./builder -c ./builder/make-image.sh --force-rebuild
+
+# Or just the setup with force rebuild
+./builder/setup-remote-builder.sh --force-rebuild
+```
+
 ### Docker Connection Issues
 The scripts automatically configure `DOCKER_HOST` to connect to Colima. If you see Docker connection errors, ensure Colima is running:
 
@@ -79,7 +93,7 @@ colima status
 ```
 
 ### Container Build Failures
-If the NixOS image build fails, the system will fall back to manual setup. You can force a clean rebuild:
+If the NixOS image build fails, the system will automatically detect and rebuild corrupted images. You can also force a clean rebuild:
 
 ```bash
 ./builder/cleanup.sh
