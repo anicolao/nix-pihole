@@ -359,9 +359,7 @@ fix_ssh_permissions() {
 }
 
 capture_sshd_debug_logs() {
-    local log_file="/tmp/sshd_debug_$(date +%s).log"
-    
-    log_info "Temporarily restarting SSH daemon in debug mode to capture authentication logs..."
+    log_info "Preparing SSH daemon for real-time debug log capture..."
     
     # Stop the current SSH daemon
     docker exec "$CONTAINER_NAME" bash -c '
@@ -369,41 +367,92 @@ capture_sshd_debug_logs() {
         SSHD_PID=$(ps aux | grep -E "sshd.*listener" | grep -v grep | awk "{print \$2}" | head -1)
         if [ -n "$SSHD_PID" ]; then
             echo "Stopping SSH daemon with PID: $SSHD_PID"
-            kill "$SSHD_PID"
+            kill "$SSHD_PID" 2>/dev/null || true
             sleep 2
         fi
+        
+        # Clean up any existing debug log
+        rm -f /tmp/sshd_debug.log /tmp/sshd_debug_fifo
+        
+        # Create a named pipe for real-time log streaming
+        mkfifo /tmp/sshd_debug_fifo 2>/dev/null || true
     ' 2>/dev/null || true
     
-    # Start SSH daemon in debug mode in the background
-    log_info "Starting SSH daemon in debug mode..."
+    # Start SSH daemon in debug mode with real-time logging
+    log_info "Starting SSH daemon in debug mode with real-time logging..."
     docker exec -d "$CONTAINER_NAME" bash -c '
         SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
         if [ -n "$SSHD_PATH" ]; then
             echo "Starting debug SSH daemon at: $SSHD_PATH"
-            "$SSHD_PATH" -D -d -p 22 &> /tmp/sshd_debug.log &
+            # Start SSH daemon with debug output going to both file and stdout
+            "$SSHD_PATH" -D -dd -e -p 22 2>&1 | tee /tmp/sshd_debug.log > /tmp/sshd_debug_fifo &
+            echo $! > /tmp/sshd_pid
         else
             echo "Could not find SSH daemon binary"
         fi
     ' 2>/dev/null || log_warning "Failed to start debug SSH daemon"
     
-    # Give SSH time to start
+    # Give SSH time to start and verify it's running
     sleep 3
     
-    # Verify SSH is running in debug mode
     log_info "Verifying debug SSH daemon is running..."
     docker exec "$CONTAINER_NAME" bash -c '
-        if ps aux | grep -E "sshd.*-d" | grep -v grep; then
-            echo "Debug SSH daemon is running"
+        if ps aux | grep -E "sshd.*-dd" | grep -v grep; then
+            echo "Debug SSH daemon is running with verbose logging"
         else
-            echo "Debug SSH daemon not found, trying to start it..."
+            echo "Debug SSH daemon not found, attempting alternative startup..."
             SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
             if [ -n "$SSHD_PATH" ]; then
-                nohup "$SSHD_PATH" -D -d -p 22 &> /tmp/sshd_debug.log &
+                # Alternative: use script to capture output
+                nohup script -q -c "$SSHD_PATH -D -dd -e -p 22" /tmp/sshd_debug.log &
+                echo $! > /tmp/sshd_pid
                 sleep 2
-                echo "SSH daemon started with debug logging"
+                echo "SSH daemon started with script-based debug logging"
             fi
         fi
+        
+        # Test SSH is accepting connections
+        echo "Testing SSH port availability..."
+        netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not yet listening on port 22"
     ' 2>/dev/null || true
+}
+
+restore_normal_sshd() {
+    log_info "Restoring normal SSH daemon operation..."
+    
+    docker exec "$CONTAINER_NAME" bash -c '
+        # Stop any debug SSH daemon
+        if [ -f /tmp/sshd_pid ]; then
+            SSHD_PID=$(cat /tmp/sshd_pid 2>/dev/null)
+            if [ -n "$SSHD_PID" ] && kill -0 "$SSHD_PID" 2>/dev/null; then
+                echo "Stopping debug SSH daemon with PID: $SSHD_PID"
+                kill "$SSHD_PID" 2>/dev/null || true
+                sleep 1
+            fi
+            rm -f /tmp/sshd_pid
+        fi
+        
+        # Kill any remaining debug SSH processes
+        pkill -f "sshd.*-d" 2>/dev/null || true
+        sleep 1
+        
+        # Start normal SSH daemon
+        SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
+        if [ -n "$SSHD_PATH" ]; then
+            echo "Starting normal SSH daemon at: $SSHD_PATH"
+            "$SSHD_PATH" -D &
+        else
+            echo "Could not find SSH daemon binary"
+        fi
+        
+        # Clean up debug files
+        rm -f /tmp/sshd_debug.log /tmp/sshd_debug_fifo
+    ' 2>/dev/null || true
+    
+    # Wait a moment for SSH to start
+    sleep 2
+    
+    log_info "Normal SSH daemon restored"
 }
 
 test_ssh_authentication() {
@@ -412,11 +461,12 @@ test_ssh_authentication() {
     
     log_info "Testing SSH key authentication..."
     
+    # Prepare SSH daemon for debug logging before starting authentication tests
+    capture_sshd_debug_logs
+    
     while [[ $attempt -le $max_attempts ]]; do
-        # For the first attempt, enable debug logging
-        if [[ $attempt -eq 1 ]]; then
-            capture_sshd_debug_logs
-        fi
+        # Clear any existing debug log before this attempt to capture only this auth attempt
+        docker exec "$CONTAINER_NAME" bash -c 'echo "=== Authentication attempt '"$attempt"' ===" >> /tmp/sshd_debug.log' 2>/dev/null || true
         
         # Capture SSH error output for debugging
         local ssh_output
@@ -426,6 +476,8 @@ test_ssh_authentication() {
         
         if [[ $ssh_exit_code -eq 0 ]]; then
             log_success "SSH key authentication is working"
+            # Restore normal SSH daemon after successful authentication
+            restore_normal_sshd
             return 0
         fi
         
@@ -441,23 +493,56 @@ test_ssh_authentication() {
         log_info "Capturing SSH daemon debug logs for this authentication failure..."
         echo "=== SSH Daemon Debug Output ==="
         
-        # Get the debug logs from the SSH daemon
+        # Try to get real-time debug output from the SSH daemon
         if docker exec "$CONTAINER_NAME" test -f /tmp/sshd_debug.log 2>/dev/null; then
-            echo "--- SSH daemon debug log (last 50 lines) ---"
-            docker exec "$CONTAINER_NAME" tail -50 /tmp/sshd_debug.log 2>/dev/null || echo "Could not read SSH debug log"
+            echo "--- SSH daemon debug log (complete) ---"
+            docker exec "$CONTAINER_NAME" cat /tmp/sshd_debug.log 2>/dev/null || echo "Could not read SSH debug log"
             echo ""
             
-            # Look for specific authentication-related messages
-            echo "--- Authentication-related entries ---"
-            docker exec "$CONTAINER_NAME" grep -i -E "(auth|key|pubkey|denied|refused|failed|error)" /tmp/sshd_debug.log 2>/dev/null | tail -20 || echo "No authentication messages found in debug log"
+            # Look for recent authentication-related messages (last 100 lines to capture the full auth attempt)
+            echo "--- Recent authentication entries (last 100 lines) ---"
+            docker exec "$CONTAINER_NAME" tail -100 /tmp/sshd_debug.log 2>/dev/null | grep -i -E "(auth|key|pubkey|denied|refused|failed|error|connection|accept|reject)" || echo "No authentication messages found in recent debug log"
             echo ""
         else
-            log_warning "SSH debug log not found, checking container output instead..."
+            log_warning "SSH debug log file not found"
         fi
         
-        # Also check container stdout/stderr for SSH messages
-        echo "--- Container logs since last attempt ---"
-        docker logs "$CONTAINER_NAME" --since 30s 2>&1 | grep -i -E "(ssh|auth|connection|refused|denied|error)" | tail -10 || echo "No recent SSH messages in container logs"
+        # Check if we can get real-time output from the named pipe
+        echo "--- Attempting to capture real-time SSH daemon output ---"
+        docker exec "$CONTAINER_NAME" bash -c '
+            if [ -p /tmp/sshd_debug_fifo ]; then
+                echo "Reading from debug fifo (timeout 2s)..."
+                timeout 2 cat /tmp/sshd_debug_fifo 2>/dev/null || echo "No real-time output available"
+            else
+                echo "Debug fifo not available"
+            fi
+        ' 2>/dev/null || echo "Could not access real-time debug output"
+        echo ""
+        
+        # Check container logs for SSH daemon messages
+        echo "--- Container logs for SSH daemon messages ---"
+        docker logs "$CONTAINER_NAME" --since 60s 2>&1 | grep -E "(sshd|SSH|Authentication|Connection|debug)" | tail -20 || echo "No SSH daemon messages in container logs"
+        echo ""
+        
+        # Check if the SSH daemon process is actually running in debug mode
+        echo "--- SSH daemon process status ---"
+        docker exec "$CONTAINER_NAME" bash -c '
+            echo "Current SSH processes:"
+            ps aux | grep -E "(sshd)" | grep -v grep || echo "No SSH processes found"
+            echo ""
+            
+            if [ -f /tmp/sshd_pid ]; then
+                SSHD_PID=$(cat /tmp/sshd_pid 2>/dev/null)
+                echo "SSH daemon PID from file: $SSHD_PID"
+                if [ -n "$SSHD_PID" ] && kill -0 "$SSHD_PID" 2>/dev/null; then
+                    echo "SSH daemon with PID $SSHD_PID is running"
+                else
+                    echo "SSH daemon with PID $SSHD_PID is not running"
+                fi
+            else
+                echo "No SSH daemon PID file found"
+            fi
+        ' 2>/dev/null || echo "Could not check SSH daemon status"
         echo ""
         
         # Check basic connectivity and permission status
@@ -507,6 +592,9 @@ test_ssh_authentication() {
     
     log_error "SSH key authentication failed after $max_attempts attempts"
     
+    # Restore normal SSH daemon even after failed authentication
+    restore_normal_sshd
+    
     # Final comprehensive debugging
     log_info "Performing final SSH authentication debugging..."
     
@@ -521,11 +609,35 @@ test_ssh_authentication() {
     docker exec "$CONTAINER_NAME" bash -c '
         if [ -f /tmp/sshd_debug.log ]; then
             echo "=== Complete SSH Daemon Debug Log ==="
-            cat /tmp/sshd_debug.log
+            echo "Log file size: $(wc -l < /tmp/sshd_debug.log 2>/dev/null || echo 0) lines"
+            echo "--- Full SSH daemon debug output ---"
+            cat /tmp/sshd_debug.log 2>/dev/null || echo "Could not read debug log file"
+            echo ""
+            
+            echo "--- Summary of key authentication events ---"
+            grep -n -i -E "(connection from|authentication|pubkey|rsa|ed25519|authorized_keys|failed|accepted|denied)" /tmp/sshd_debug.log 2>/dev/null || echo "No key authentication events found"
         else
-            echo "No SSH debug log found"
+            echo "=== No SSH Debug Log Found ==="
+            echo "Checking if SSH daemon is still running in debug mode..."
+            if ps aux | grep -E "sshd.*-d" | grep -v grep; then
+                echo "SSH daemon appears to be running in debug mode but no log file found"
+                
+                # Try to find any other SSH daemon logs
+                echo "Looking for alternative SSH daemon output locations..."
+                find /tmp -name "*ssh*" -o -name "*debug*" 2>/dev/null | head -10 || echo "No SSH-related files in /tmp"
+                
+                # Check system logs if available
+                if command -v journalctl >/dev/null 2>&1; then
+                    echo "Recent SSH entries from journal:"
+                    journalctl --no-pager -n 50 | grep -i ssh || echo "No SSH entries in journal"
+                fi
+            else
+                echo "No SSH daemon running in debug mode found"
+                echo "Current SSH processes:"
+                ps aux | grep ssh | grep -v grep || echo "No SSH processes"
+            fi
         fi
-    ' 2>/dev/null || true
+    ' 2>/dev/null || echo "Could not access container for debug log analysis"
     
     return 1
 }
