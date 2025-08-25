@@ -80,14 +80,17 @@
           name = "nix-remote-builder";
           tag = "latest";
           
-          # Create image contents with required packages
-          contents = with pkgs; [
-            bash
-            coreutils
-            openssh
-            nix
-            entrypoint
-          ];
+          # Copy packages to root filesystem
+          copyToRoot = pkgs.buildEnv {
+            name = "image-root";
+            paths = with pkgs; [
+              bash
+              coreutils
+              openssh
+              nix
+              entrypoint
+            ];
+          };
           
           # Configuration for the image
           config = {
