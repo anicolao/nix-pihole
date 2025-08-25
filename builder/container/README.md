@@ -22,6 +22,8 @@ nix build .#nix-remote-builder
 docker load < result
 ```
 
+**Note**: If you encounter `derivationStrict` errors, ensure you're using a recent version with the simplified Docker image configuration that avoids complex package dependencies and privilege separation issues.
+
 ## Using the Image
 
 The built image can be used as a drop-in replacement for manual container setup:
