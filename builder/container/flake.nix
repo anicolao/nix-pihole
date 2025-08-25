@@ -65,7 +65,7 @@
       
       # Simplified entrypoint script using SSH defaults with minimal required config
       entrypoint = pkgs.writeScriptBin "entrypoint" ''
-        #!/bin/bash
+        #!${targetPkgs.bash}/bin/bash
         set -euo pipefail
         
         echo "Starting SSH server setup..."
@@ -79,9 +79,9 @@
         # Generate SSH host keys if they don't exist
         if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
           echo "Generating SSH host keys..."
-          ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" -q
-          ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N "" -q  
-          ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N "" -q
+          ${targetPkgs.openssh}/bin/ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" -q
+          ${targetPkgs.openssh}/bin/ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N "" -q  
+          ${targetPkgs.openssh}/bin/ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N "" -q
           chmod 600 /etc/ssh/ssh_host_*_key
           chmod 644 /etc/ssh/ssh_host_*_key.pub
         fi
@@ -101,11 +101,11 @@ EOF
         
         # Test SSH configuration
         echo "Testing SSH configuration..."
-        /bin/sshd -T
+        ${targetPkgs.openssh}/bin/sshd -T
         
         # Start SSH daemon
         echo "SSH server ready, starting daemon..."
-        exec /bin/sshd -D
+        exec ${targetPkgs.openssh}/bin/sshd -D
       '';
     in {
       packages = {
