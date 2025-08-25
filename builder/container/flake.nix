@@ -17,8 +17,8 @@
       targetPkgs = nixpkgs.legacyPackages.${targetSystem};
       
       # Create essential system files that Docker needs to find the root user
-      # Use target system's bash for the root shell
-      passwdFile = targetPkgs.writeTextFile {
+      # Use host system for building files but target system paths for runtime
+      passwdFile = pkgs.writeTextFile {
         name = "passwd";
         text = ''
           root:x:0:0:root:/root:${targetPkgs.bash}/bin/bash
@@ -27,7 +27,7 @@
         destination = "/etc/passwd";
       };
       
-      groupFile = targetPkgs.writeTextFile {
+      groupFile = pkgs.writeTextFile {
         name = "group";
         text = ''
           root:x:0:
@@ -36,7 +36,7 @@
         destination = "/etc/group";
       };
       
-      shadowFile = targetPkgs.writeTextFile {
+      shadowFile = pkgs.writeTextFile {
         name = "shadow";
         text = ''
           root:!:19000:0:99999:7:::
@@ -46,13 +46,13 @@
       };
       
       # Create minimal SSH config directory structure
-      sshDir = targetPkgs.runCommand "ssh-dir" {} ''
+      sshDir = pkgs.runCommand "ssh-dir" {} ''
         mkdir -p $out/etc/ssh
         # Use OpenSSH defaults - no custom sshd_config needed
       '';
       
       # Nix configuration
-      nixConfig = targetPkgs.writeTextFile {
+      nixConfig = pkgs.writeTextFile {
         name = "nix.conf";
         text = ''
           experimental-features = nix-command flakes
@@ -65,8 +65,8 @@
       };
       
       # Simplified entrypoint script using SSH defaults with minimal required config
-      # Use target system bash to avoid exec format errors
-      entrypoint = targetPkgs.writeTextFile {
+      # Use host system to build the script (avoid cross-compilation) but target system paths for runtime
+      entrypoint = pkgs.writeTextFile {
         name = "entrypoint";
         text = ''
           #!${targetPkgs.bash}/bin/bash
