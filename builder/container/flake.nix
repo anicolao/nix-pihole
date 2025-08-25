@@ -120,6 +120,7 @@ EOF
             paths = with targetPkgs; [
               bash
               coreutils
+              gnugrep  # Add grep utility for container checks
               openssh
               nix
               git
@@ -140,7 +141,7 @@ EOF
           # Configuration for the image
           config = {
             Env = [
-              "PATH=/bin:/usr/bin"
+              "PATH=/bin:/usr/bin:/nix/var/nix/profiles/default/bin"
               "USER=root"
               "HOME=/root"
             ];
