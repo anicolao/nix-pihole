@@ -10,28 +10,83 @@
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = nixpkgs.legacyPackages.${system};
       
-      # Simple entrypoint script
+      # Create essential system files that Docker needs to find the root user
+      passwdFile = pkgs.writeTextFile {
+        name = "passwd";
+        text = ''
+          root:x:0:0:root:/root:/bin/bash
+          sshd:x:74:74:SSH daemon:/var/empty:/bin/false
+        '';
+        destination = "/etc/passwd";
+      };
+      
+      groupFile = pkgs.writeTextFile {
+        name = "group";
+        text = ''
+          root:x:0:
+          sshd:x:74:
+        '';
+        destination = "/etc/group";
+      };
+      
+      shadowFile = pkgs.writeTextFile {
+        name = "shadow";
+        text = ''
+          root:!:19000:0:99999:7:::
+          sshd:!:19000:0:99999:7:::
+        '';
+        destination = "/etc/shadow";
+      };
+      
+      # SSH daemon configuration
+      sshdConfig = pkgs.writeTextFile {
+        name = "sshd_config";
+        text = ''
+          Port 22
+          PermitRootLogin yes
+          PubkeyAuthentication yes
+          PasswordAuthentication no
+          AuthorizedKeysFile /root/.ssh/authorized_keys
+          UsePrivilegeSeparation no
+          UsePAM no
+          StrictModes no
+          ListenAddress 0.0.0.0
+          HostKey /etc/ssh/ssh_host_rsa_key
+          HostKey /etc/ssh/ssh_host_ecdsa_key  
+          HostKey /etc/ssh/ssh_host_ed25519_key
+          SyslogFacility AUTH
+          LogLevel INFO
+        '';
+        destination = "/etc/ssh/sshd_config";
+      };
+      
+      # Nix configuration
+      nixConfig = pkgs.writeTextFile {
+        name = "nix.conf";
+        text = ''
+          experimental-features = nix-command flakes
+          trusted-users = root
+          sandbox = false
+          substituters = https://cache.nixos.org/
+          trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+        '';
+        destination = "/root/.config/nix/nix.conf";
+      };
+      
+      # Simplified entrypoint script - only handles SSH setup, users already exist
       entrypoint = pkgs.writeScriptBin "entrypoint" ''
         #!/bin/bash
         set -euo pipefail
         
-        echo "Setting up SSH server..."
+        echo "Starting SSH server setup..."
         
         # Create required directories
-        mkdir -p /etc/ssh /var/run/sshd /var/empty /root/.ssh /root/.config/nix
+        mkdir -p /etc/ssh /var/run/sshd /var/empty /root/.ssh
         
-        # Create system users and groups
-        echo "root:x:0:" > /etc/group
-        echo "sshd:x:74:" >> /etc/group
-        echo "root:x:0:0:root:/root:/bin/bash" > /etc/passwd
-        echo "sshd:x:74:74:SSH daemon:/var/empty:/bin/false" >> /etc/passwd
-        
-        # Create shadow file for password authentication
-        echo "root:!:19000:0:99999:7:::" > /etc/shadow
-        echo "sshd:!:19000:0:99999:7:::" >> /etc/shadow
+        # Set proper permissions on shadow file
         chmod 640 /etc/shadow
         
-        # Generate SSH host keys
+        # Generate SSH host keys if they don't exist
         if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
           echo "Generating SSH host keys..."
           ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" -q
@@ -41,43 +96,16 @@
           chmod 644 /etc/ssh/ssh_host_*_key.pub
         fi
         
-        # Create SSH configuration
-        cat > /etc/ssh/sshd_config << 'EOF'
-        Port 22
-        PermitRootLogin yes
-        PubkeyAuthentication yes
-        PasswordAuthentication no
-        AuthorizedKeysFile /root/.ssh/authorized_keys
-        UsePrivilegeSeparation no
-        UsePAM no
-        StrictModes no
-        ListenAddress 0.0.0.0
-        HostKey /etc/ssh/ssh_host_rsa_key
-        HostKey /etc/ssh/ssh_host_ecdsa_key  
-        HostKey /etc/ssh/ssh_host_ed25519_key
-        SyslogFacility AUTH
-        LogLevel INFO
-        EOF
-        
-        # Set proper permissions
+        # Set proper permissions on SSH directories
         chmod 700 /root/.ssh
         chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
-        
-        # Create nix.conf
-        cat > /root/.config/nix/nix.conf << 'EOF'
-        experimental-features = nix-command flakes
-        trusted-users = root
-        sandbox = false
-        substituters = https://cache.nixos.org/
-        trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
-        EOF
         
         # Test SSH configuration
         echo "Testing SSH configuration..."
         /bin/sshd -T
         
         # Start SSH daemon
-        echo "Starting SSH daemon..."
+        echo "SSH server ready, starting daemon..."
         exec /bin/sshd -D
       '';
     in {
@@ -87,7 +115,7 @@
           name = "nix-remote-builder";
           tag = "latest";
           
-          # Copy packages to root filesystem
+          # Copy packages and system files to root filesystem
           copyToRoot = pkgs.buildEnv {
             name = "image-root";
             paths = with pkgs; [
@@ -100,6 +128,12 @@
               gzip
               xz
               entrypoint
+              # Essential system files that Docker needs
+              passwdFile
+              groupFile
+              shadowFile
+              sshdConfig
+              nixConfig
             ];
           };
           
