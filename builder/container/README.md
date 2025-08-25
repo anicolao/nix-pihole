@@ -22,7 +22,7 @@ nix build .#nix-remote-builder
 docker load < result
 ```
 
-**Note**: If you encounter `derivationStrict` errors, ensure you're using a recent version with the simplified Docker image configuration that avoids complex package dependencies and privilege separation issues.
+**Note**: This version uses a simplified Docker image configuration with `writeScriptBin` to avoid `derivationStrict` errors that occurred with complex inline shell scripts in the Docker configuration.
 
 ## Using the Image
 
