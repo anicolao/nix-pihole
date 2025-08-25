@@ -4,29 +4,59 @@ This directory contains the Nix configuration to build a Docker image pre-config
 
 ## Overview
 
-Instead of manually setting up SSH and Nix in a running container, this approach uses Nix to declaratively build a Docker image that comes with everything pre-configured:
+This approach uses canonical NixOS configuration patterns to build a Docker image that comes with everything pre-configured:
 
-- NixOS environment with Nix package manager
-- SSH server properly configured for remote access
+- SSH server configured using NixOS `services.openssh` canonical approach
+- Nix package manager optimized for remote building
 - All required system users and directories
-- Nix configuration optimized for remote building
+- Proper SSH security settings following NixOS best practices
+
+## Key Features
+
+**Canonical NixOS SSH Configuration**: Instead of manually writing SSH daemon configuration files, this container uses the standard NixOS `services.openssh` module approach to generate proper SSH configuration. This ensures:
+
+- SSH settings follow NixOS security best practices
+- Configuration is maintainable and consistent with NixOS systems
+- Proper host key generation and management
+- Standard authentication and security policies
 
 ## Building the Image
 
 ```bash
-# Build the Docker image
-./build-image.sh
-
-# Or manually:
+# Build the Docker image using Nix
 nix build .#nix-remote-builder
 docker load < result
+
+# Or using the build script:
+../build-image.sh
 ```
 
-**Note**: This version uses a simplified Docker image configuration with `writeScriptBin` to avoid `derivationStrict` errors that occurred with complex inline shell scripts in the Docker configuration.
+## SSH Configuration Approach
+
+The container now uses the canonical NixOS approach for SSH configuration:
+
+```nix
+# In flake.nix - SSH configured the NixOS way
+services.openssh = {
+  enable = true;
+  settings = {
+    PermitRootLogin = "yes";
+    PubkeyAuthentication = true;
+    PasswordAuthentication = false;
+    UsePAM = false;
+    StrictModes = true;
+  };
+  hostKeys = [
+    { path = "/etc/ssh/ssh_host_ed25519_key"; type = "ed25519"; }
+    { path = "/etc/ssh/ssh_host_rsa_key"; type = "rsa"; bits = 4096; }
+    { path = "/etc/ssh/ssh_host_ecdsa_key"; type = "ecdsa"; bits = 521; }
+  ];
+};
+```
+
+This replaces manual `sshd_config` creation with NixOS's standard service configuration.
 
 ## Using the Image
-
-The built image can be used as a drop-in replacement for manual container setup:
 
 ```bash
 # Run the container
@@ -41,18 +71,15 @@ ssh -i ~/.ssh/nix-remote-builder -p 2222 root@localhost
 
 ## Advantages
 
+- **NixOS Best Practices**: Uses canonical NixOS service configuration patterns
+- **Maintainable**: SSH configuration follows standard NixOS module structure
+- **Secure**: Implements NixOS security defaults for SSH
 - **Reproducible**: Every container starts with identical configuration
 - **Fast startup**: No runtime installation or configuration needed
-- **Reliable**: Eliminates manual setup failures and SSH configuration issues
-- **Declarative**: All configuration is defined in Nix files
-- **Debuggable**: Easy to modify and rebuild if changes are needed
-
-## Integration
-
-This pre-built image integrates with the existing builder scripts by replacing the manual container setup in `setup-remote-builder.sh` with a simple `docker run` command using this image.
+- **Declarative**: All configuration is defined in Nix files using standard patterns
 
 ## Files
 
-- `flake.nix` - Nix configuration to build the Docker image
+- `flake.nix` - Nix configuration using canonical NixOS SSH service patterns
 - `build-image.sh` - Script to build and load the image
 - `README.md` - This documentation

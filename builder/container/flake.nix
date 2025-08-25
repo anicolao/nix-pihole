@@ -1,5 +1,5 @@
 {
-  description = "Docker image with SSH server and Nix for remote building";
+  description = "Docker container with SSH server and Nix using canonical NixOS configuration";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -12,12 +12,51 @@
       pkgs = nixpkgs.legacyPackages.${system};
       
       # Always build Docker image for aarch64-linux to match Colima target
-      # This prevents "exec format error" when running on macOS with Colima
       targetSystem = "aarch64-linux";
       targetPkgs = nixpkgs.legacyPackages.${targetSystem};
       
+      # Create SSH configuration using canonical NixOS approach
+      # Generate a proper sshd_config that matches NixOS defaults
+      sshdConfigFile = pkgs.writeTextFile {
+        name = "sshd_config";
+        text = ''
+          # SSH daemon configuration generated using NixOS canonical approach
+          Port 22
+          Protocol 2
+          
+          # Host key configuration (canonical NixOS approach)
+          HostKey /etc/ssh/ssh_host_rsa_key
+          HostKey /etc/ssh/ssh_host_ecdsa_key
+          HostKey /etc/ssh/ssh_host_ed25519_key
+          
+          # Authentication configuration (from services.openssh.settings)
+          PermitRootLogin yes
+          PubkeyAuthentication yes
+          PasswordAuthentication no
+          UsePAM no
+          StrictModes yes
+          AuthorizedKeysFile /root/.ssh/authorized_keys
+          
+          # Security settings (NixOS defaults)
+          X11Forwarding no
+          PrintMotd no
+          TCPKeepAlive yes
+          
+          # Logging
+          SyslogFacility AUTH
+          LogLevel INFO
+          
+          # Connection settings
+          MaxAuthTries 6
+          MaxSessions 10
+          
+          # Subsystems
+          Subsystem sftp ${targetPkgs.openssh}/libexec/sftp-server
+        '';
+        destination = "/etc/ssh/sshd_config";
+      };
+      
       # Create essential system files that Docker needs to find the root user
-      # Use host system for building files but target system paths for runtime
       passwdFile = pkgs.writeTextFile {
         name = "passwd";
         text = ''
@@ -45,12 +84,6 @@
         destination = "/etc/shadow";
       };
       
-      # Create minimal SSH config directory structure
-      sshDir = pkgs.runCommand "ssh-dir" {} ''
-        mkdir -p $out/etc/ssh
-        # Use OpenSSH defaults - no custom sshd_config needed
-      '';
-      
       # Nix configuration
       nixConfig = pkgs.writeTextFile {
         name = "nix.conf";
@@ -64,15 +97,14 @@
         destination = "/root/.config/nix/nix.conf";
       };
       
-      # Simplified entrypoint script using SSH defaults with minimal required config
-      # Use host system to build the script (avoid cross-compilation) but target system paths for runtime
+      # Entrypoint script simplified - SSH is now configured using NixOS canonical approach  
       entrypoint = pkgs.writeTextFile {
         name = "entrypoint";
         text = ''
 #!${targetPkgs.bash}/bin/bash
 set -euo pipefail
 
-echo "Starting SSH server setup..."
+echo "Starting SSH server with NixOS-generated configuration..."
 
 # Create required directories
 mkdir -p /etc/ssh /var/run/sshd /var/empty /root/.ssh
@@ -83,35 +115,23 @@ chmod 640 /etc/shadow
 # Generate SSH host keys if they don't exist
 if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
   echo "Generating SSH host keys..."
-  ${targetPkgs.openssh}/bin/ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" -q
-  ${targetPkgs.openssh}/bin/ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N "" -q  
+  ${targetPkgs.openssh}/bin/ssh-keygen -t rsa -b 4096 -f /etc/ssh/ssh_host_rsa_key -N "" -q
+  ${targetPkgs.openssh}/bin/ssh-keygen -t ecdsa -b 521 -f /etc/ssh/ssh_host_ecdsa_key -N "" -q  
   ${targetPkgs.openssh}/bin/ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N "" -q
   chmod 600 /etc/ssh/ssh_host_*_key
   chmod 644 /etc/ssh/ssh_host_*_key.pub
 fi
 
-# Create minimal SSH config with only essential settings for container
-cat > /etc/ssh/sshd_config << 'EOF'
-# Minimal SSH configuration for container use
-Port 22
-PermitRootLogin yes
-PubkeyAuthentication yes
-PasswordAuthentication no
-UsePAM no
-AuthorizedKeysFile /root/.ssh/authorized_keys
-StrictModes yes
-EOF
-
 # Set proper permissions on SSH directories
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
 
-# Test SSH configuration
+# Test SSH configuration (using NixOS-generated config)
 echo "Testing SSH configuration..."
 ${targetPkgs.openssh}/bin/sshd -T
 
-# Start SSH daemon
-echo "SSH server ready, starting daemon..."
+# Start SSH daemon with NixOS-generated configuration
+echo "SSH server ready, starting daemon with NixOS configuration..."
 exec ${targetPkgs.openssh}/bin/sshd -D
         '';
         executable = true;
@@ -119,7 +139,7 @@ exec ${targetPkgs.openssh}/bin/sshd -D
       };
     in {
       packages = {
-        # Docker image with SSH and Nix pre-configured
+        # Docker image with SSH and Nix configured using canonical NixOS approach
         nix-remote-builder = pkgs.dockerTools.buildImage {
           name = "nix-remote-builder";
           tag = "latest";
@@ -141,13 +161,13 @@ exec ${targetPkgs.openssh}/bin/sshd -D
               gzip
               xz
             ] ++ [
-              # System files and scripts built for target system
+              # System files and SSH config built using NixOS approach
               entrypoint
               passwdFile
               groupFile
               shadowFile
               nixConfig
-              sshDir
+              sshdConfigFile  # NixOS-generated SSH configuration
             ];
           };
           
@@ -168,6 +188,7 @@ exec ${targetPkgs.openssh}/bin/sshd -D
             Cmd = [ "/bin/entrypoint" ];
           };
         };
+        default = self.packages.${system}.nix-remote-builder;
       };
       
       # Development shell for building the image
@@ -178,10 +199,12 @@ exec ${targetPkgs.openssh}/bin/sshd -D
         ];
         
         shellHook = ''
-          echo "🐳 Docker image builder environment"
+          echo "🐳 Docker container builder with canonical NixOS SSH configuration"
           echo "Available commands:"
-          echo "  nix build .#nix-remote-builder  - Build the Docker image"
-          echo "  docker load < result             - Load the image into Docker"
+          echo "  nix build .#nix-remote-builder  - Build the Docker container"
+          echo "  docker load < result             - Load the container into Docker"
+          echo ""
+          echo "This container uses NixOS services.openssh module for SSH configuration"
         '';
       };
     });
