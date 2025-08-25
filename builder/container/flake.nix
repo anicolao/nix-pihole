@@ -38,27 +38,11 @@
         destination = "/etc/shadow";
       };
       
-      # SSH daemon configuration
-      sshdConfig = pkgs.writeTextFile {
-        name = "sshd_config";
-        text = ''
-          Port 22
-          PermitRootLogin yes
-          PubkeyAuthentication yes
-          PasswordAuthentication no
-          AuthorizedKeysFile /root/.ssh/authorized_keys
-          UsePrivilegeSeparation no
-          UsePAM no
-          StrictModes no
-          ListenAddress 0.0.0.0
-          HostKey /etc/ssh/ssh_host_rsa_key
-          HostKey /etc/ssh/ssh_host_ecdsa_key  
-          HostKey /etc/ssh/ssh_host_ed25519_key
-          SyslogFacility AUTH
-          LogLevel INFO
-        '';
-        destination = "/etc/ssh/sshd_config";
-      };
+      # Create minimal SSH config directory structure
+      sshDir = pkgs.runCommand "ssh-dir" {} ''
+        mkdir -p $out/etc/ssh
+        # Use OpenSSH defaults - no custom sshd_config needed
+      '';
       
       # Nix configuration
       nixConfig = pkgs.writeTextFile {
@@ -73,7 +57,7 @@
         destination = "/root/.config/nix/nix.conf";
       };
       
-      # Simplified entrypoint script - only handles SSH setup, users already exist
+      # Simplified entrypoint script using SSH defaults with minimal required config
       entrypoint = pkgs.writeScriptBin "entrypoint" ''
         #!/bin/bash
         set -euo pipefail
@@ -95,6 +79,15 @@
           chmod 600 /etc/ssh/ssh_host_*_key
           chmod 644 /etc/ssh/ssh_host_*_key.pub
         fi
+        
+        # Create minimal SSH config with only essential settings for container
+        cat > /etc/ssh/sshd_config << 'EOF'
+# Minimal SSH configuration for container use
+PermitRootLogin yes
+PubkeyAuthentication yes
+PasswordAuthentication no
+UsePAM no
+EOF
         
         # Set proper permissions on SSH directories
         chmod 700 /root/.ssh
@@ -132,8 +125,9 @@
               passwdFile
               groupFile
               shadowFile
-              sshdConfig
               nixConfig
+              # SSH directory structure (no custom config)
+              sshDir
             ];
           };
           
