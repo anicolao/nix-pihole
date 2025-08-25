@@ -17,16 +17,17 @@
       targetPkgs = nixpkgs.legacyPackages.${targetSystem};
       
       # Create essential system files that Docker needs to find the root user
-      passwdFile = pkgs.writeTextFile {
+      # Use target system's bash for the root shell
+      passwdFile = targetPkgs.writeTextFile {
         name = "passwd";
         text = ''
-          root:x:0:0:root:/root:/bin/bash
+          root:x:0:0:root:/root:${targetPkgs.bash}/bin/bash
           sshd:x:74:74:SSH daemon:/var/empty:/bin/false
         '';
         destination = "/etc/passwd";
       };
       
-      groupFile = pkgs.writeTextFile {
+      groupFile = targetPkgs.writeTextFile {
         name = "group";
         text = ''
           root:x:0:
@@ -35,7 +36,7 @@
         destination = "/etc/group";
       };
       
-      shadowFile = pkgs.writeTextFile {
+      shadowFile = targetPkgs.writeTextFile {
         name = "shadow";
         text = ''
           root:!:19000:0:99999:7:::
@@ -45,13 +46,13 @@
       };
       
       # Create minimal SSH config directory structure
-      sshDir = pkgs.runCommand "ssh-dir" {} ''
+      sshDir = targetPkgs.runCommand "ssh-dir" {} ''
         mkdir -p $out/etc/ssh
         # Use OpenSSH defaults - no custom sshd_config needed
       '';
       
       # Nix configuration
-      nixConfig = pkgs.writeTextFile {
+      nixConfig = targetPkgs.writeTextFile {
         name = "nix.conf";
         text = ''
           experimental-features = nix-command flakes
@@ -64,11 +65,11 @@
       };
       
       # Simplified entrypoint script using SSH defaults with minimal required config
-      # Use a simple text file approach to avoid cross-compilation issues
-      entrypoint = pkgs.writeTextFile {
+      # Use target system bash to avoid exec format errors
+      entrypoint = targetPkgs.writeTextFile {
         name = "entrypoint";
         text = ''
-          #!/bin/bash
+          #!${targetPkgs.bash}/bin/bash
           set -euo pipefail
           
           echo "Starting SSH server setup..."
@@ -82,9 +83,9 @@
           # Generate SSH host keys if they don't exist
           if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
             echo "Generating SSH host keys..."
-            /nix/var/nix/profiles/default/bin/ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" -q
-            /nix/var/nix/profiles/default/bin/ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N "" -q  
-            /nix/var/nix/profiles/default/bin/ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N "" -q
+            ${targetPkgs.openssh}/bin/ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N "" -q
+            ${targetPkgs.openssh}/bin/ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N "" -q  
+            ${targetPkgs.openssh}/bin/ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N "" -q
             chmod 600 /etc/ssh/ssh_host_*_key
             chmod 644 /etc/ssh/ssh_host_*_key.pub
           fi
@@ -104,11 +105,11 @@ EOF
           
           # Test SSH configuration
           echo "Testing SSH configuration..."
-          /nix/var/nix/profiles/default/bin/sshd -T
+          ${targetPkgs.openssh}/bin/sshd -T
           
           # Start SSH daemon
           echo "SSH server ready, starting daemon..."
-          exec /nix/var/nix/profiles/default/bin/sshd -D
+          exec ${targetPkgs.openssh}/bin/sshd -D
         '';
         executable = true;
         destination = "/bin/entrypoint";
@@ -134,7 +135,7 @@ EOF
               gzip
               xz
             ] ++ [
-              # Build scripts and system files with host system
+              # System files and scripts built for target system
               entrypoint
               passwdFile
               groupFile
