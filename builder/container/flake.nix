@@ -17,6 +17,7 @@
       
       # SSH configuration using canonical NixOS services.openssh structure
       # Generate sshd_config with same format as NixOS services.openssh would create
+      # Place in non-conflicting location to avoid collision with openssh package
       sshdConfigFile = pkgs.writeTextFile {
         name = "sshd_config";
         text = ''
@@ -69,7 +70,7 @@
           AuthorizedKeysFile .ssh/authorized_keys
           PidFile /var/run/sshd.pid
         '';
-        destination = "/etc/ssh/sshd_config";
+        destination = "/etc/ssh/sshd_config.nixos";
       };
       
       # SSH host key configuration matching NixOS services.openssh defaults
@@ -152,6 +153,10 @@ mkdir -p /etc/ssh /var/run/sshd /var/empty /root/.ssh
 # Set proper permissions on shadow file
 chmod 640 /etc/shadow
 
+# Copy NixOS-style SSH configuration to correct location
+echo "Installing NixOS-style services.openssh configuration..."
+cp /etc/ssh/sshd_config.nixos /etc/ssh/sshd_config
+
 # Generate SSH host keys using NixOS services.openssh specification
 echo "Generating SSH host keys using NixOS services.openssh specification..."
 ${hostKeyCommands}
@@ -201,7 +206,7 @@ exec ${targetPkgs.openssh}/bin/sshd -D -f /etc/ssh/sshd_config
               groupFile
               shadowFile
               nixConfig
-              sshdConfigFile  # SSH config following NixOS services.openssh structure
+              sshdConfigFile  # Custom SSH config placed at non-conflicting path
             ];
           };
           
