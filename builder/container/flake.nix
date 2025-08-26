@@ -102,7 +102,7 @@
       shadowFile = pkgs.writeTextFile {
         name = "shadow";
         text = ''
-          root:!:19000:0:99999:7:::
+          root:*:19000:0:99999:7:::
           sshd:!:19000:0:99999:7:::
         '';
         destination = "/etc/shadow";
@@ -153,6 +153,12 @@ mkdir -p /etc/ssh /var/run/sshd /var/empty /root/.ssh
 # Set proper permissions on shadow file
 chmod 640 /etc/shadow
 
+# Ensure root account is unlocked for SSH access
+# The shadow file should already have * instead of ! but ensure it's unlocked
+if command -v passwd >/dev/null 2>&1; then
+  passwd -u root >/dev/null 2>&1 || true
+fi
+
 # Copy NixOS-style SSH configuration to correct location
 echo "Installing NixOS-style services.openssh configuration..."
 cp /etc/ssh/sshd_config.nixos /etc/ssh/sshd_config
@@ -199,6 +205,7 @@ exec ${targetPkgs.openssh}/bin/sshd -D -f /etc/ssh/sshd_config
               gnutar
               gzip
               xz
+              shadow  # For passwd command to unlock accounts
             ] ++ [
               # System files and SSH config following NixOS services.openssh patterns
               entrypoint
