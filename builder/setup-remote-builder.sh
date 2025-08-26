@@ -150,8 +150,8 @@ setup_nix_container() {
     
     log_info "Creating new container with Nix pre-installed..."
     
-    # Use nixos/nix image which has Nix pre-installed on Alpine Linux base
-    # Alpine has standard package management (apk) that should work reliably for SSH
+    # Use nixos/nix image which has Nix pre-installed on a minimal base
+    # We'll use Nix package manager to install SSH and required tools
     docker run -d \
         --name "$CONTAINER_NAME" \
         --platform linux/aarch64 \
@@ -163,39 +163,89 @@ setup_nix_container() {
     log_info "Waiting for container initialization..."
     sleep 5
     
-    # Install SSH using Alpine package manager (much more reliable than manual setup)
-    log_info "Installing SSH server using Alpine package manager..."
+    # Install SSH using Nix (the image only has Nix, no Alpine package manager)
+    log_info "Installing SSH server using Nix..."
     docker exec "$CONTAINER_NAME" sh -c '
-        # Update package index and install OpenSSH and network tools
-        apk update
-        apk add openssh openssh-server netstat-nat shadow
+        # Install OpenSSH and required tools using Nix
+        nix-env -iA nixpkgs.openssh nixpkgs.procps nixpkgs.nettools nixpkgs.shadow
+        
+        # Create SSH directory structure
+        mkdir -p /etc/ssh /var/run/sshd /var/log
         
         # Generate SSH host keys
-        ssh-keygen -A
+        ssh-keygen -t rsa -b 4096 -f /etc/ssh/ssh_host_rsa_key -N ""
+        ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N ""
+        ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
         
-        # Create SSH run directory
-        mkdir -p /var/run/sshd
+        # Set proper permissions on host keys
+        chmod 600 /etc/ssh/ssh_host_*_key
+        chmod 644 /etc/ssh/ssh_host_*_key.pub
         
-        # Configure SSH for remote access
-        sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin yes/" /etc/ssh/sshd_config
-        sed -i "s/#PubkeyAuthentication yes/PubkeyAuthentication yes/" /etc/ssh/sshd_config
-        sed -i "s/#PasswordAuthentication yes/PasswordAuthentication no/" /etc/ssh/sshd_config
+        # Create SSH configuration
+        cat > /etc/ssh/sshd_config << EOF
+Port 22
+Protocol 2
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+UsePrivilegeSeparation no
+KeyRegenerationInterval 3600
+ServerKeyBits 1024
+SyslogFacility AUTH
+LogLevel INFO
+LoginGraceTime 600
+PermitRootLogin yes
+StrictModes yes
+RSAAuthentication yes
+PubkeyAuthentication yes
+AuthorizedKeysFile /root/.ssh/authorized_keys
+IgnoreRhosts yes
+RhostsRSAAuthentication no
+HostbasedAuthentication no
+IgnoreUserKnownHosts yes
+PasswordAuthentication no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+X11Forwarding no
+X11DisplayOffset 10
+PrintMotd no
+PrintLastLog yes
+TCPKeepAlive yes
+AcceptEnv LANG LC_*
+Subsystem sftp /nix/var/nix/profiles/default/libexec/sftp-server
+UsePAM no
+EOF
         
-        # Ensure root account is unlocked for SSH key authentication
-        # Set root password first to ensure account exists in shadow file
-        echo "root:password" | chpasswd
+        # Create a minimal shadow file to ensure root account exists and is unlocked
+        # Use "*" for password field which allows SSH key authentication but no password login
+        cat > /etc/shadow << EOF
+root:*:19000:0:99999:7:::
+EOF
         
-        # Explicitly unlock the root account (removes ! from password field)
-        passwd -u root
+        # Ensure proper permissions on shadow file
+        chmod 640 /etc/shadow
         
-        # Verify root account is unlocked
-        getent shadow root | grep -q "^root:[^!]" && echo "Root account is unlocked" || echo "WARNING: Root account may still be locked"
+        # Create passwd file
+        cat > /etc/passwd << EOF
+root:x:0:0:root:/root:/bin/sh
+EOF
+        
+        # Create group file
+        cat > /etc/group << EOF
+root:x:0:
+EOF
         
         # Start SSH daemon
-        /usr/sbin/sshd
+        $(which sshd) -D &
+        
+        # Give SSH time to start
+        sleep 2
         
         # Verify SSH is running
-        ps aux | grep sshd
+        ps aux | grep sshd || echo "SSH daemon not found in process list"
+        
+        # Test SSH is listening
+        netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
     '
     
     # Add SSH key to the container
@@ -224,10 +274,10 @@ EOF
     log_info "Testing SSH daemon accessibility..."
     docker exec "$CONTAINER_NAME" sh -c '
         # Test that SSH is listening on port 22
-        netstat -tlnp | grep :22 || echo "SSH not listening on port 22"
+        netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
         
         # Test SSH daemon configuration
-        /usr/sbin/sshd -T || echo "SSH configuration test failed"
+        $(which sshd) -T || echo "SSH configuration test failed"
     '
     
     log_success "Container with pre-installed Nix and SSH service is ready"
