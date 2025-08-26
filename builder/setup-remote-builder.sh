@@ -8,29 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINER_NAME="nix-remote-builder"
 SSH_KEY_PATH="$HOME/.ssh/nix-remote-builder"
 
-# Parse command line arguments
-FORCE_REBUILD=false
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --force-rebuild)
-            FORCE_REBUILD=true
-            shift
-            ;;
-        -h|--help)
-            echo "Usage: $0 [OPTIONS]"
-            echo "Options:"
-            echo "  --force-rebuild  Force rebuild of Docker image even if it exists"
-            echo "  -h, --help       Show this help message"
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            echo "Use --help for usage information"
-            exit 1
-            ;;
-    esac
-done
-
 # Configure Docker to use Colima
 export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 
@@ -162,63 +139,8 @@ start_colima() {
     fi
 }
 
-ensure_docker_image() {
-    log_info "Ensuring Nix remote builder Docker image is available..."
-    
-    # Force rebuild if requested
-    if [[ "$FORCE_REBUILD" == "true" ]]; then
-        log_info "Force rebuild requested, removing existing image..."
-        docker rmi nix-remote-builder:latest 2>/dev/null || true
-    fi
-    
-    # Check if the image already exists
-    if docker images nix-remote-builder:latest --format "table {{.Repository}}:{{.Tag}}" | grep -q "nix-remote-builder:latest"; then
-        log_info "Docker image 'nix-remote-builder:latest' already exists"
-        
-        # Test if the existing image is working by checking if it has the root user
-        log_info "Testing existing Docker image..."
-        if docker run --rm nix-remote-builder:latest /bin/bash -c 'grep -q "^root:" /etc/passwd && echo "Root user found"' 2>/dev/null | grep -q "Root user found"; then
-            log_success "Existing Docker image appears to be working correctly"
-            return 0
-        else
-            log_warning "Existing Docker image appears to be corrupted (missing root user)"
-            log_info "Removing corrupted image and rebuilding..."
-            docker rmi nix-remote-builder:latest || true
-        fi
-    fi
-    
-    log_info "Docker image not found or corrupted. Building it now..."
-    log_info "This may take several minutes on first run..."
-    
-    # Build the image using the container build script
-    if [[ -f "$SCRIPT_DIR/container/build-image.sh" ]]; then
-        if "$SCRIPT_DIR/container/build-image.sh"; then
-            log_success "Docker image built successfully"
-            
-            # Verify the newly built image
-            log_info "Verifying newly built image..."
-            if docker run --rm nix-remote-builder:latest /bin/bash -c 'grep -q "^root:" /etc/passwd && echo "Root user found"' 2>/dev/null | grep -q "Root user found"; then
-                log_success "New Docker image verified successfully"
-            else
-                log_error "New Docker image verification failed - root user not found"
-                exit 1
-            fi
-        else
-            log_error "Failed to build Docker image"
-            exit 1
-        fi
-    else
-        log_error "Docker image build script not found at $SCRIPT_DIR/container/build-image.sh"
-        log_info "Please ensure the container build scripts are available"
-        exit 1
-    fi
-}
-
 setup_nix_container() {
-    log_info "Setting up Nix container using pre-built Docker image..."
-    
-    # Ensure the Docker image is available
-    ensure_docker_image
+    log_info "Setting up Nix container with pre-installed Nix..."
     
     # Remove existing container if it exists to ensure clean state
     if docker ps -a --format 'table {{.Names}}' | grep -q "^$CONTAINER_NAME$"; then
@@ -226,311 +148,125 @@ setup_nix_container() {
         docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     fi
     
-    log_info "Creating new container from pre-built image..."
+    log_info "Creating new container with Nix pre-installed..."
     
-    # Use our pre-built Docker image with SSH and Nix already configured
+    # Use nixos/nix image which has Nix pre-installed on Alpine Linux base
+    # Alpine has standard package management (apk) that should work reliably for SSH
     docker run -d \
         --name "$CONTAINER_NAME" \
         --platform linux/aarch64 \
         -p 2222:22 \
-        nix-remote-builder:latest
+        nixos/nix:latest \
+        tail -f /dev/null
     
-    # Give the container time to start up and initialize SSH
+    # Give the container time to start up
     log_info "Waiting for container initialization..."
-    sleep 10
+    sleep 5
     
-    # Wait for SSH service to be ready and ensure directory exists
-    log_info "Waiting for SSH service to start..."
-    for i in {1..30}; do
-        if docker exec "$CONTAINER_NAME" test -d /root/.ssh; then
-            log_success "SSH directory is ready"
-            break
-        fi
-        if [ $i -eq 30 ]; then
-            log_error "SSH directory not created after 30 attempts"
-            exit 1
-        fi
-        sleep 1
-    done
-    
-    # Add SSH key to the container with proper ownership
-    log_info "Adding SSH public key to container..."
-    docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
-    
-    # Set proper ownership and permissions immediately after copying
-    docker exec "$CONTAINER_NAME" bash -c '
-        chown root:root /root/.ssh/authorized_keys
-        chmod 600 /root/.ssh/authorized_keys
-        chmod 700 /root/.ssh
-        chown root:root /root/.ssh
-    '
-    
-    # Verify the container is ready
-    log_info "Verifying container setup..."
+    # Install SSH using Alpine package manager (much more reliable than manual setup)
+    log_info "Installing SSH server using Alpine package manager..."
     docker exec "$CONTAINER_NAME" sh -c '
-        echo "=== Container Status ==="
-        ps aux | grep -E "(sshd|nix)" || echo "No SSH or Nix processes found"
+        # Update package index and install OpenSSH and network tools
+        apk update
+        apk add openssh openssh-server netstat-nat shadow
         
-        echo "=== Network Status ==="
-        netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
+        # Generate SSH host keys
+        ssh-keygen -A
         
-        echo "=== Nix Verification ==="
-        nix --version || echo "Nix not available"
+        # Create SSH run directory
+        mkdir -p /var/run/sshd
         
-        echo "=== SSH Config Verification ==="
-        # Find and test SSH daemon configuration
-        SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
-        if [ -n "$SSHD_PATH" ]; then
-            echo "Testing SSH config with: $SSHD_PATH"
-            "$SSHD_PATH" -T || echo "SSH configuration test failed"
-        else
-            echo "Could not find SSH daemon"
-        fi
+        # Configure SSH for remote access
+        sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin yes/" /etc/ssh/sshd_config
+        sed -i "s/#PubkeyAuthentication yes/PubkeyAuthentication yes/" /etc/ssh/sshd_config
+        sed -i "s/#PasswordAuthentication yes/PasswordAuthentication no/" /etc/ssh/sshd_config
         
-        echo "=== SSH Key Setup Check ==="
-        ls -la /root/.ssh/ || echo "No SSH directory"
-        test -f /root/.ssh/authorized_keys && echo "Authorized keys file exists" || echo "No authorized keys file"
+        # Ensure root account is unlocked for SSH key authentication
+        # Set root password first to ensure account exists in shadow file
+        echo "root:password" | chpasswd
+        
+        # Explicitly unlock the root account (removes ! from password field)
+        passwd -u root
+        
+        # Verify root account is unlocked
+        getent shadow root | grep -q "^root:[^!]" && echo "Root account is unlocked" || echo "WARNING: Root account may still be locked"
+        
+        # Start SSH daemon
+        /usr/sbin/sshd
+        
+        # Verify SSH is running
+        ps aux | grep sshd
     '
     
-    log_success "Container with pre-configured Nix and SSH service is ready"
+    # Add SSH key to the container
+    log_info "Adding SSH public key to container..."
+    docker exec "$CONTAINER_NAME" mkdir -p /root/.ssh
+    docker cp "$SSH_KEY_PATH.pub" "$CONTAINER_NAME:/root/.ssh/authorized_keys"
+    docker exec "$CONTAINER_NAME" chmod 600 /root/.ssh/authorized_keys
+    docker exec "$CONTAINER_NAME" chmod 700 /root/.ssh
+    
+    # Verify Nix is available and working
+    log_info "Verifying Nix installation..."
+    docker exec "$CONTAINER_NAME" nix --version
+    
+    # Configure Nix for remote building
+    log_info "Configuring Nix for remote building..."
+    docker exec "$CONTAINER_NAME" sh -c '
+        mkdir -p /root/.config/nix
+        cat > /root/.config/nix/nix.conf << EOF
+experimental-features = nix-command flakes
+trusted-users = root
+sandbox = false
+EOF
+    '
+    
+    # Test SSH connectivity from inside container
+    log_info "Testing SSH daemon accessibility..."
+    docker exec "$CONTAINER_NAME" sh -c '
+        # Test that SSH is listening on port 22
+        netstat -tlnp | grep :22 || echo "SSH not listening on port 22"
+        
+        # Test SSH daemon configuration
+        /usr/sbin/sshd -T || echo "SSH configuration test failed"
+    '
+    
+    log_success "Container with pre-installed Nix and SSH service is ready"
 }
 
-wait_for_ssh_banner() {
+wait_for_container_ready() {
     local max_wait=60
     local wait_time=0
     
-    log_info "Waiting for SSH service to start (checking banner)..."
+    log_info "Waiting for container to be ready..."
     
     while [[ $wait_time -lt $max_wait ]]; do
-        # Test SSH banner using netcat or telnet - this is a lower level test
-        local ssh_banner=""
+        # First check if the port is open using netcat
         if command -v nc >/dev/null 2>&1; then
-            # Use netcat to get SSH banner
-            ssh_banner=$(echo "quit" | timeout 3 nc localhost 2222 2>/dev/null | head -1 || true)
-        elif command -v telnet >/dev/null 2>&1; then
-            # Fallback to telnet if netcat is not available
-            ssh_banner=$(echo "quit" | timeout 3 telnet localhost 2222 2>/dev/null | grep "SSH-" || true)
-        fi
-        
-        # Check if we got a valid SSH banner (should start with "SSH-")
-        if [[ "$ssh_banner" =~ ^SSH- ]]; then
-            log_success "SSH service is responding with banner: $ssh_banner"
-            return 0
+            if nc -z localhost 2222 >/dev/null 2>&1; then
+                # Port is open, now test actual SSH connectivity
+                if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=2 -o BatchMode=yes root@localhost -p 2222 exit >/dev/null 2>&1; then
+                    log_success "Container SSH is ready after ${wait_time}s"
+                    return 0
+                fi
+            fi
+        else
+            # Fallback to SSH test only if netcat is not available
+            if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=2 -o BatchMode=yes root@localhost -p 2222 exit >/dev/null 2>&1; then
+                log_success "Container SSH is ready after ${wait_time}s"
+                return 0
+            fi
         fi
         
         # Print status update every 5 seconds to avoid spam
         if [[ $((wait_time % 5)) -eq 0 ]] && [[ $wait_time -gt 0 ]]; then
-            log_info "Still waiting for SSH service... (${wait_time}s/${max_wait}s)"
+            log_info "Still waiting for container SSH... (${wait_time}s/${max_wait}s)"
         fi
         
         sleep 1
         wait_time=$((wait_time + 1))
     done
     
-    log_error "SSH service failed to start within ${max_wait} seconds"
-    return 1
-}
-
-fix_ssh_permissions() {
-    log_info "Checking and fixing SSH permissions..."
-    
-    # Ensure proper ownership and permissions for SSH directories and files
-    docker exec "$CONTAINER_NAME" bash -c '
-        # Fix ownership - everything should be owned by root:root
-        chown -R root:root /root/.ssh/ 2>/dev/null || true
-        chown root:root /etc/ssh/ssh_host_*key* 2>/dev/null || true
-        
-        # Fix directory permissions
-        chmod 700 /root/.ssh 2>/dev/null || true
-        chmod 755 /etc/ssh 2>/dev/null || true
-        
-        # Fix file permissions
-        chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
-        chmod 600 /etc/ssh/ssh_host_*key 2>/dev/null || true
-        chmod 644 /etc/ssh/ssh_host_*key.pub 2>/dev/null || true
-        
-        # Verify critical permissions
-        echo "=== SSH Permission Status ==="
-        ls -la /root/.ssh/ 2>/dev/null || echo "No /root/.ssh directory"
-        ls -la /etc/ssh/ssh_host_*key* 2>/dev/null || echo "No SSH host keys found"
-    '
-    
-    log_success "SSH permissions fixed"
-}
-
-capture_ssh_daemon_logs() {
-    local attempt_num=$1
-    
-    log_info "Restarting SSH daemon in debug mode to capture authentication logs..."
-    
-    # Restart SSH daemon in debug mode
-    docker exec "$CONTAINER_NAME" bash -c '
-        # Stop current SSH daemon
-        pkill -f "sshd.*-D" 2>/dev/null || true
-        sleep 1
-        
-        # Find SSH daemon binary
-        SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
-        if [ -n "$SSHD_PATH" ]; then
-            echo "Starting SSH daemon in debug mode..."
-            # Start SSH daemon in debug mode, output goes to stderr which Docker captures
-            nohup "$SSHD_PATH" -D -dd -e 2>&1 &
-            echo $! > /tmp/sshd_debug.pid
-            sleep 2
-            echo "SSH daemon restarted in debug mode"
-        else
-            echo "Could not find SSH daemon binary"
-        fi
-    ' 2>/dev/null || true
-    
-    log_info "SSH daemon restarted in debug mode for authentication attempt $attempt_num"
-}
-
-restore_normal_ssh_daemon() {
-    log_info "Restoring SSH daemon to normal mode..."
-    
-    docker exec "$CONTAINER_NAME" bash -c '
-        # Stop debug SSH daemon
-        if [ -f /tmp/sshd_debug.pid ]; then
-            DEBUG_PID=$(cat /tmp/sshd_debug.pid 2>/dev/null)
-            if [ -n "$DEBUG_PID" ] && kill -0 "$DEBUG_PID" 2>/dev/null; then
-                kill "$DEBUG_PID" 2>/dev/null || true
-            fi
-            rm -f /tmp/sshd_debug.pid
-        fi
-        
-        # Kill any debug SSH processes
-        pkill -f "sshd.*-d" 2>/dev/null || true
-        sleep 1
-        
-        # Start normal SSH daemon
-        SSHD_PATH=$(which sshd 2>/dev/null || find /nix/store -name sshd -type f 2>/dev/null | head -1)
-        if [ -n "$SSHD_PATH" ]; then
-            nohup "$SSHD_PATH" -D &
-        fi
-    ' 2>/dev/null || true
-    
-    sleep 2
-}
-
-test_ssh_authentication() {
-    local max_attempts=3
-    local attempt=1
-    
-    log_info "Testing SSH key authentication..."
-    
-    while [[ $attempt -le $max_attempts ]]; do
-        log_info "Attempting SSH connection (attempt $attempt/$max_attempts)..."
-        
-        # Restart SSH daemon in debug mode to capture this authentication attempt
-        capture_ssh_daemon_logs "$attempt"
-        
-        # Get the current container log position to capture only new logs
-        local log_before=$(docker logs "$CONTAINER_NAME" 2>&1 | wc -l)
-        
-        # Try the actual SSH authentication
-        local ssh_output
-        ssh_output=$(ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes -v root@localhost -p 2222 'echo "SSH authentication successful"' 2>&1)
-        local ssh_exit_code=$?
-        
-        if [[ $ssh_exit_code -eq 0 ]]; then
-            log_success "SSH key authentication is working"
-            restore_normal_ssh_daemon
-            return 0
-        fi
-        
-        log_warning "SSH authentication attempt $attempt/$max_attempts failed (exit code: $ssh_exit_code)"
-        
-        # Show SSH client error details for debugging
-        if [[ $attempt -eq 1 ]]; then
-            log_info "SSH client error details:"
-            echo "$ssh_output" | grep -E "(debug1|Permission denied|Authentication|Connection|refused)" || echo "No specific SSH client errors found"
-            echo ""
-        fi
-        
-        # Capture SSH daemon debug logs from Docker container logs
-        log_info "Capturing SSH daemon debug output from container logs..."
-        echo "=== SSH Daemon Debug Output (Attempt $attempt) ==="
-        
-        # Get new logs since the authentication attempt started
-        local new_logs=$(docker logs "$CONTAINER_NAME" --since 30s 2>&1)
-        
-        if [[ -n "$new_logs" ]]; then
-            echo "--- Recent SSH daemon debug output ---"
-            echo "$new_logs" | grep -E "(debug|sshd|SSH|Connection|Authentication|pubkey|key|denied|accepted|failed|error)" || echo "No SSH debug messages found in container logs"
-            echo ""
-            
-            echo "--- Authentication-specific entries ---"
-            echo "$new_logs" | grep -i -E "(connection from|authentication|pubkey|authorized_keys|failed|accepted|denied)" || echo "No authentication entries found"
-            echo ""
-        else
-            echo "No recent container logs found"
-        fi
-        
-        # Also try to get any SSH daemon messages from the last few seconds
-        echo "--- All recent container logs (last 30s) ---"
-        docker logs "$CONTAINER_NAME" --since 30s 2>&1 | tail -20 || echo "Could not get recent container logs"
-        echo ""
-        
-        # Check basic connectivity and permission status
-        log_info "Checking SSH setup and permissions..."
-        docker exec "$CONTAINER_NAME" bash -c '
-            echo "=== SSH Service Status ==="
-            ps aux | grep -E "(sshd)" | grep -v grep || echo "No SSH daemon found"
-            
-            echo "=== Network Status ==="  
-            netstat -tlnp 2>/dev/null | grep :22 || echo "SSH not listening on port 22"
-            
-            echo "=== SSH Key Debug ==="
-            echo "Authorized keys file permissions:"
-            ls -la /root/.ssh/authorized_keys 2>/dev/null || echo "No authorized_keys file"
-            echo "SSH directory permissions:"
-            ls -la /root/.ssh/ 2>/dev/null || echo "No SSH directory"
-            echo "Authorized keys content (first line, first 80 chars):"
-            head -1 /root/.ssh/authorized_keys 2>/dev/null | cut -c1-80 || echo "Cannot read authorized_keys"
-            
-            echo "=== SSH Key Validation ==="
-            if [ -f /root/.ssh/authorized_keys ]; then
-                echo "Testing public key format..."
-                while read -r key; do
-                    if [ -n "$key" ] && [[ ! "$key" =~ ^[[:space:]]*# ]]; then
-                        echo "Key fingerprint: $(echo "$key" | ssh-keygen -l -f - 2>/dev/null || echo "Invalid key format")"
-                    fi
-                done < /root/.ssh/authorized_keys
-            fi
-            
-            echo "=== SSH Configuration Check ==="
-            if [ -f /etc/ssh/sshd_config ]; then
-                echo "Key authentication settings:"
-                grep -E "PubkeyAuthentication|PasswordAuthentication|PermitRootLogin|AuthorizedKeysFile" /etc/ssh/sshd_config 2>/dev/null || echo "No auth settings found in config"
-            else
-                echo "No sshd_config file found"
-            fi
-        ' 2>/dev/null || log_warning "Failed to get SSH debug information"
-        
-        echo "=== End of Authentication Failure Analysis ==="
-        
-        if [[ $attempt -lt $max_attempts ]]; then
-            log_info "Retrying in 2 seconds..."
-            sleep 2
-        fi
-        attempt=$((attempt + 1))
-    done
-    
-    log_error "SSH key authentication failed after $max_attempts attempts"
-    
-    # Restore normal SSH daemon
-    restore_normal_ssh_daemon
-    
-    # Final comprehensive debugging
-    log_info "Performing final SSH authentication debugging..."
-    
-    # Try a manual SSH test with maximum verbosity
-    log_info "Testing SSH connection with maximum verbosity..."
-    echo "=== Full SSH Debug Output ==="
-    ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 -vvv root@localhost -p 2222 'echo "SSH test"' 2>&1 | head -50 || true
-    echo ""
-    
+    log_error "Container SSH failed to become ready within ${max_wait} seconds"
     return 1
 }
 
@@ -557,17 +293,23 @@ configure_nix_remote_builder() {
         echo "builders-use-substitutes = true" >> "$NIX_CONF_FILE"
     fi
     
-    # Test the connection - simpler approach since Nix is pre-configured in our image
+    # Test the connection
     log_info "Testing remote builder connection..."
-    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'nix --version' &> /dev/null; then
+    if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'source /root/.nix-profile/etc/profile.d/nix.sh && nix --version' &> /dev/null; then
         log_success "Remote builder connection successful"
     else
         log_error "Failed to connect to remote builder"
         log_info "Debug: Testing basic SSH connection..."
         if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'echo "SSH works"'; then
             log_info "SSH connection works, checking Nix installation..."
-            log_info "Trying Nix command with full path..."
-            ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 '/nix/var/nix/profiles/default/bin/nix --version || /root/.nix-profile/bin/nix --version || which nix'
+            if ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'ls -la /root/.nix-profile/'; then
+                log_info "Nix profile exists, trying with explicit sourcing..."
+                ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'source /root/.nix-profile/etc/profile.d/nix.sh && nix --version'
+            else
+                log_error "Nix installation might have failed"
+                log_info "Checking if Nix installer completed successfully..."
+                ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@localhost -p 2222 'ls -la /nix/ /root/'
+            fi
         else
             log_error "Basic SSH connection failed"
         fi
@@ -594,13 +336,6 @@ print_usage_instructions() {
     echo "4. To restart the remote builder later:"
     echo "   $0"
     echo ""
-    echo "5. To force rebuild the Docker image:"
-    echo "   $0 --force-rebuild"
-    echo ""
-    echo "6. If you encounter issues, clean up completely and try again:"
-    echo "   ./builder/cleanup.sh"
-    echo "   $0"
-    echo ""
     log_info "The remote builder will automatically be used for aarch64-linux builds."
 }
 
@@ -621,20 +356,12 @@ main() {
     setup_ssh_key
     start_colima
     setup_nix_container
-    wait_for_ssh_banner
-    fix_ssh_permissions
-    
-    # Test SSH authentication - handle failure gracefully to show logs
-    if ! test_ssh_authentication; then
-        log_error "SSH authentication failed. Please check the logs above for details."
-        exit 1
-    fi
-    
+    wait_for_container_ready
     configure_nix_remote_builder
     print_usage_instructions
 }
 
 # Run main function if script is executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main
+    main "$@"
 fi

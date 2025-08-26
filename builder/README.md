@@ -22,27 +22,32 @@ nix develop ./builder -c ./builder/make-image.sh
 
 The builder solution uses a **pre-built Docker image approach** for maximum reliability:
 
-**Nix-built Docker Image** - Uses a Docker image built with Nix that includes:
-- NixOS environment with SSH server pre-configured
-- All required system users (including `sshd` user for privilege separation)
-- Proper directory structure (`/var/empty`, `/var/run/sshd`, etc.)
-- Nix package manager with optimized configuration for remote building
-- SSH server configured and ready to accept connections
+**Pre-built nixos/nix Image** - Uses the official `nixos/nix:latest` Docker image which includes:
+- Alpine Linux base with Nix package manager pre-installed
+- Minimal, reliable foundation for SSH server installation
+- Standard Alpine package management (apk) for additional dependencies
+- No complex systemd or NixOS module dependencies
+
+**Runtime SSH Configuration** - The setup script then:
+- Installs OpenSSH server using Alpine's package manager
+- Generates SSH host keys and configures authentication
+- Ensures root account is unlocked for SSH key authentication
+- Starts SSH daemon and verifies connectivity
 
 This approach eliminates the previous complexity of:
-- Runtime SSH server installation and configuration
-- Manual creation of system users and directories
-- Complex privilege separation setup
-- Network connectivity issues during package installation
-- Container startup failures due to systemd or init issues
+- Complex NixOS module evaluation in Docker containers
+- File collisions between custom SSH configs and openssh packages
+- Cross-compilation issues in Docker image builds
+- Container startup failures due to systemd dependencies
 
 ### Technical Details
 
 The setup process:
-1. **Pre-built Image**: Uses a Docker image built with Nix containing everything pre-configured
-2. **Container Creation**: Simple `docker run` with the pre-built image
-3. **SSH Key Setup**: Copies SSH public key to the running container
-4. **Remote Builder**: Configures Nix to use the container as a remote builder
+1. **Pre-built Image**: Uses the official `nixos/nix:latest` Docker image
+2. **SSH Installation**: Installs OpenSSH using Alpine package manager (apk)
+3. **Root Account Setup**: Ensures root account is unlocked for SSH key authentication
+4. **SSH Configuration**: Configures SSH for key-based authentication
+5. **Remote Builder**: Configures Nix to use the container as a remote builder
 
 ## Architecture
 
