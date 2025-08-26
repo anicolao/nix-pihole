@@ -9,25 +9,45 @@
     userConfig = if builtins.pathExists ./personal/alex_users.nix 
       then ./personal/alex_users.nix 
       else ./default-users.nix;
-  in rec {
-    nixosConfigurations.rpi4 = nixpkgs.lib.nixosSystem {
+    
+    # Support building from multiple host systems
+    supportedSystems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+    forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+    
+    # Create the RPI4 system configuration
+    mkRpi4System = nixpkgs.lib.nixosSystem {
       system = "aarch64-linux";
       modules = [
         "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
         ./sdimage.nix
         userConfig
         ./configuration.nix
+        {
+          nixpkgs.config.allowUnfree = true;
+        }
       ];
     };
-    images.rpi4 = nixosConfigurations.rpi4.config.system.build.sdImage;
+  in rec {
+    # For backward compatibility, provide a default rpi4 configuration 
+    nixosConfigurations.rpi4 = mkRpi4System;
 
-    packages.aarch64-linux.nixosConfigurations."${hostname}" = nixpkgs.lib.nixosSystem {
-      system = "aarch64-linux";
-      modules = [
-        ./filesystems.nix
-        userConfig
-        ./configuration.nix
-      ];
+    # Make the image available directly at top level
+    images.rpi4 = mkRpi4System.config.system.build.sdImage;
+
+    # Provide the image as a package on all systems
+    # Note: Nix should handle cross-compilation automatically when needed
+    packages = forAllSystems (system: {
+      rpi4-image = mkRpi4System.config.system.build.sdImage;
+      default = mkRpi4System.config.system.build.sdImage;
+    }) // {
+      aarch64-linux.nixosConfigurations."${hostname}" = nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        modules = [
+          ./filesystems.nix
+          userConfig
+          ./configuration.nix
+        ];
+      };
     };
   };
 }

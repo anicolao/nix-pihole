@@ -5,6 +5,9 @@ emu2/test-*.img
 emu2/*.log
 emu2/.direnv/
 
+# Builder container outputs
+builder/container/result
+
 # Secrets file containing sensitive configuration
 secrets.nix
 
