@@ -21,9 +21,11 @@
         modules = [
           # Import the openssh NixOS module
           "${nixpkgs}/nixos/modules/services/networking/ssh/sshd.nix"
-          # Import required base modules
+          # Import required base modules for module evaluation
           "${nixpkgs}/nixos/modules/misc/ids.nix"
           "${nixpkgs}/nixos/modules/config/users-groups.nix"
+          "${nixpkgs}/nixos/modules/misc/assertions.nix"
+          "${nixpkgs}/nixos/modules/system/etc/etc.nix"
           
           # Our SSH configuration using canonical services.openssh
           ({ config, lib, pkgs, ... }: {
@@ -52,6 +54,11 @@
             # Required for module evaluation
             system.stateVersion = "23.11";
             nixpkgs.system = targetSystem;
+            
+            # Provide empty defaults for required options
+            users.users = {};
+            users.groups = {};
+            environment.etc = {};
           })
         ];
         
@@ -111,6 +118,23 @@
         destination = "/root/.config/nix/nix.conf";
       };
       
+      # Generate SSH host key commands from the canonical NixOS configuration
+      hostKeyCommands = builtins.concatStringsSep "\n" (map (key: 
+        let 
+          keyPath = key.path; 
+          keyType = key.type; 
+          keyBits = if key ? bits then toString key.bits else ""; 
+        in
+        ''
+          if [ ! -f ${keyPath} ]; then
+            echo "Generating ${keyType} host key at ${keyPath}..."
+            ${targetPkgs.openssh}/bin/ssh-keygen -t ${keyType} ${if keyBits != "" then "-b ${keyBits}" else ""} -f ${keyPath} -N "" -q
+            chmod 600 ${keyPath}
+            chmod 644 ${keyPath}.pub
+          fi
+        ''
+      ) sshHostKeys);
+
       # Entrypoint script that uses the canonical NixOS-generated SSH configuration  
       entrypoint = pkgs.writeTextFile {
         name = "entrypoint";
@@ -128,21 +152,7 @@ chmod 640 /etc/shadow
 
 # Generate SSH host keys using the canonical NixOS services.openssh specification
 echo "Generating SSH host keys using NixOS services.openssh specification..."
-${builtins.concatStringsSep "\n" (map (key: 
-  let 
-    keyPath = key.path; 
-    keyType = key.type; 
-    keyBits = toString (key.bits or ""); 
-  in
-  ''
-    if [ ! -f ${keyPath} ]; then
-      echo "Generating ${keyType} host key at ${keyPath}..."
-      ${targetPkgs.openssh}/bin/ssh-keygen -t ${keyType} ${if keyBits != "" then "-b ${keyBits}" else ""} -f ${keyPath} -N "" -q
-      chmod 600 ${keyPath}
-      chmod 644 ${keyPath}.pub
-    fi
-  ''
-) sshHostKeys)}
+${hostKeyCommands}
 
 # Set proper permissions on SSH directories
 chmod 700 /root/.ssh
