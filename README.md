@@ -71,6 +71,47 @@ nano personal/alex_users.nix  # Modify usernames and settings as needed
 - Your SSH public key for secure access
 - A hashed password for the root user
 
+### Remote Building with Colima (for non-aarch64 systems)
+
+If you are not running on an `aarch64-linux` system (e.g., you are on an Intel Mac), you can use the provided remote builder to build the `aarch64-linux` image. This setup uses [Colima](https://github.com/abiosoft/colima) to run an `aarch64` Linux VM and a Docker container to run the Nix daemon.
+
+**Prerequisites:**
+
+- [Colima](https://github.com/abiosoft/colima)
+- [Docker](https://www.docker.com/)
+
+**Setup and Usage:**
+
+1.  **Navigate to the `remote-builder` directory:**
+    ```bash
+    cd remote-builder
+    ```
+
+2.  **Enter the development shell:**
+    This shell provides all the necessary dependencies (`colima`, `docker`, `sshpass`, etc.).
+    ```bash
+    nix develop
+    ```
+
+3.  **Set up the remote builder:**
+    This will start the Colima VM and the Nix builder container.
+    ```bash
+    ./setup-remote-builder.sh
+    ```
+
+4.  **Test the remote builder:**
+    This will build a simple `hello` package for `aarch64-linux` to verify that the remote builder is working.
+    ```bash
+    ./test-remote-builder.sh
+    ```
+
+5.  **Build the Raspberry Pi 4 image:**
+    This will build the main Pi-hole SD card image using the remote builder.
+    ```bash
+    ./make-image.sh
+    ```
+    The resulting image will be available in the `result` directory in the root of the project.
+
 ### 2. Building an SD Card Image
 
 To create a bootable SD card image for your Raspberry Pi 4:
