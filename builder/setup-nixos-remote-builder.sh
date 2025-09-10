@@ -95,8 +95,8 @@ if ! nix build .#images.remote-builder 2>/dev/null; then
         cat > /tmp/Dockerfile.nix-builder << 'EOF'
 FROM nixos/nix:latest
 
-# Install required packages
-RUN nix-env -iA nixpkgs.openssh nixpkgs.shadow nixpkgs.git nixpkgs.curl
+# Install required packages (avoiding git conflict with git-minimal already in base image)
+RUN nix-env -iA nixpkgs.openssh nixpkgs.shadow nixpkgs.curl
 
 # Create necessary directories
 RUN mkdir -p /root/.ssh /etc/ssh /run/sshd /var/log /var/empty /etc/nix
