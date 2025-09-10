@@ -4,11 +4,10 @@ This directory contains scripts to set up and use a remote builder for building 
 
 ## Overview
 
-The remote builder setup uses:
-- **Colima**: Lightweight container runtime for macOS with aarch64 VM support
-- **Docker**: Container runtime managed by Colima
-- **NixOS container**: Acts as the remote builder with full Nix environment
-- **SSH**: Secure connection to the remote builder
+The remote builder setup provides multiple approaches:
+- **Container-based**: NixOS container with improved service management (recommended)
+- **NixOS container**: Full NixOS system in container with declarative configuration
+- **VM-based**: NixOS directly in Colima VM (future enhancement)
 
 ## Quick Start
 
@@ -17,9 +16,16 @@ The remote builder setup uses:
    nix develop
    ```
 
-2. **Set up the remote builder**:
+2. **Set up the remote builder** (choose one approach):
    ```bash
+   # Recommended: Improved container approach
    ./builder/setup-remote-builder.sh
+   
+   # Alternative: Full NixOS container (requires nix available)
+   ./builder/setup-nixos-remote-builder.sh
+   
+   # Future: Direct VM approach
+   ./builder/setup-nixos-vm-builder.sh
    ```
 
 3. **Test the remote builder**:
@@ -34,15 +40,57 @@ The remote builder setup uses:
 
 ## Scripts
 
-### `setup-remote-builder.sh`
+### `setup-remote-builder.sh` (Recommended)
 
-Sets up the complete remote builder environment:
-- Creates a Colima profile with aarch64 architecture
-- Launches a NixOS Docker container with Nix daemon
-- Configures SSH access with key-based authentication
-- Sets up Nix remote builder configuration
+**New improved approach** that addresses SSH configuration complexity:
+- Creates a more robust initialization script for the container
+- Properly configures SSH daemon with all necessary files
+- Uses external script mounting for better error handling
+- Provides more patient waiting for services to start
+- Includes comprehensive debugging information
 
 **Usage**: `./builder/setup-remote-builder.sh`
+
+### `setup-nixos-remote-builder.sh` (Alternative)
+
+**Full NixOS approach** using declarative configuration:
+- Builds a proper NixOS container image with SSH service
+- Uses NixOS modules for service configuration
+- Eliminates manual SSH setup complexity
+- Requires Nix to be available for building the container image
+
+**Usage**: `./builder/setup-nixos-remote-builder.sh`
+
+### `setup-nixos-vm-builder.sh` (Future Enhancement)
+
+**VM-based approach** for maximum compatibility:
+- Runs NixOS directly in the Colima VM
+- Provides the most native NixOS experience
+- Currently provides foundation setup only
+- Future enhancement for full automation
+
+**Usage**: `./builder/setup-nixos-vm-builder.sh`
+
+## Approach Comparison
+
+| Approach | Complexity | Reliability | Requirements | Status |
+|----------|------------|-------------|--------------|--------|
+| Improved Container | Low | High | Docker only | ✅ Ready |
+| NixOS Container | Medium | Very High | Nix + Docker | ✅ Ready |
+| Direct VM | High | Maximum | VM setup | 🚧 Future |
+
+## Why Multiple Approaches?
+
+The original manual SSH setup was becoming complex due to:
+- Manual service configuration in containers
+- Host key generation complexity
+- SSH daemon path issues in NixOS
+- Service startup timing issues
+
+The new approaches address these issues by:
+- **Improved Container**: Better scripts and error handling
+- **NixOS Container**: Declarative service configuration
+- **Direct VM**: Native NixOS environment
 
 ### `test-remote-builder.sh`
 

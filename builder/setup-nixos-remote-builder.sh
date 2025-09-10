@@ -1,10 +1,11 @@
 #!/bin/bash
-# Setup script for Colima-based remote builder using NixOS with proper service management
+# Setup script for Colima-based remote builder using NixOS container
+# This replaces the manual SSH setup with a proper NixOS configuration
 
 set -e
 
-echo "🚀 Setting up Colima Remote Builder with NixOS (Service-based)"
-echo "=============================================================="
+echo "🚀 Setting up Colima Remote Builder with NixOS Container"
+echo "======================================================="
 echo
 
 # Configuration
@@ -75,7 +76,24 @@ else
     exit 1
 fi
 
-echo "🐳 Setting up NixOS container with systemd for proper service management..."
+echo "🏗️  Building NixOS remote builder container image..."
+
+# Build the NixOS container image
+echo "📦 Building NixOS container with proper SSH configuration..."
+if ! nix build .#images.remote-builder --system aarch64-linux; then
+    echo "❌ Failed to build NixOS container image"
+    echo "ℹ️  Make sure you have a remote builder configured or are on an aarch64 system"
+    exit 1
+fi
+
+# Load the built image into Docker
+echo "📤 Loading NixOS container image into Docker..."
+DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker load < result
+
+# Get the image ID/name from the loaded image
+IMAGE_NAME=$(DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker images --format "table {{.Repository}}:{{.Tag}}" | grep -v "REPOSITORY" | head -n1 | tr -d ' ')
+
+echo "🐳 Setting up NixOS container for remote building..."
 
 # Remove existing container if it exists
 echo "🧹 Cleaning up any existing container..."
@@ -87,71 +105,17 @@ if [ ! -f "$HOME/.ssh/nix-builder" ]; then
     echo "🔑 Generated SSH key: $HOME/.ssh/nix-builder"
 fi
 
-# Create initialization script for the container
-cat > /tmp/init-nixos-builder.sh << 'INIT_SCRIPT'
-#!/bin/bash
-set -e
-
-echo "Starting NixOS container initialization..."
-
-# Install essential packages using nix-env
-echo "Installing SSH server and utilities..."
-nix-env -iA nixpkgs.openssh nixpkgs.shadow nixpkgs.systemd
-
-# Create necessary directories
-mkdir -p /var/empty /run/sshd /root/.ssh /etc/nix /etc/ssh
-
-# Configure nix
-echo "experimental-features = nix-command flakes" > /etc/nix/nix.conf
-echo "trusted-users = root" >> /etc/nix/nix.conf
-
-# Generate SSH host keys
-echo "Generating SSH host keys..."
-ssh-keygen -t rsa -b 4096 -f /etc/ssh/ssh_host_rsa_key -N ""
-ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N ""
-ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
-
-# Create SSH daemon config
-cat > /etc/ssh/sshd_config << 'EOF'
-Port 22
-PermitRootLogin yes
-PasswordAuthentication no
-PubkeyAuthentication yes
-AuthorizedKeysFile .ssh/authorized_keys
-HostKey /etc/ssh/ssh_host_rsa_key
-HostKey /etc/ssh/ssh_host_ecdsa_key
-HostKey /etc/ssh/ssh_host_ed25519_key
-PidFile /run/sshd.pid
-EOF
-
-# Start the nix daemon in background
-echo "Starting Nix daemon..."
-nix-daemon &
-
-# Wait for authorized keys to be mounted/created
-echo "Waiting for SSH key setup..."
-while [ ! -f /root/.ssh/authorized_keys ]; do
-    sleep 1
-done
-
-echo "Starting SSH daemon..."
-# Use the nix-installed sshd
-$(which sshd) -D -e
-INIT_SCRIPT
-
-echo "🚀 Starting NixOS container with systemd support..."
+echo "🚀 Starting NixOS container with proper SSH configuration..."
 DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker run -d \
     --name nix-remote-builder \
     --platform linux/arm64 \
     --privileged \
     -p 2222:22 \
     -v nix-store:/nix \
-    -v /tmp/init-nixos-builder.sh:/init.sh:ro \
-    nixos/nix:latest \
-    /bin/bash /init.sh
+    "$IMAGE_NAME"
 
-# Wait a moment for the container to start basic initialization
-echo "⏳ Waiting for container basic startup..."
+# Wait a moment for the container to start
+echo "⏳ Waiting for NixOS container to initialize..."
 sleep 10
 
 # Check if container started successfully
@@ -184,25 +148,23 @@ EOF
 
 echo "🧪 Testing remote builder connection..."
 
-# Wait for SSH service to be ready with more patient waiting
-for i in {1..24}; do
-    if timeout 15 ssh -i "$HOME/.ssh/nix-builder" -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p 2222 root@localhost "echo 'SSH connection successful'" > /dev/null 2>&1; then
+# Wait for SSH service to be ready
+for i in {1..12}; do
+    if timeout 10 ssh -i "$HOME/.ssh/nix-builder" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p 2222 root@localhost "echo 'SSH connection successful'" > /dev/null 2>&1; then
         echo "✅ Remote builder SSH connection successful"
         break
     fi
-    if [ $i -eq 24 ]; then
-        echo "❌ Remote builder SSH connection failed after 2 minutes"
+    if [ $i -eq 12 ]; then
+        echo "❌ Remote builder SSH connection failed after multiple attempts"
         echo "ℹ️  Container status:"
         DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker ps -a | grep nix-remote-builder
         echo "ℹ️  Container logs:"
-        DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker logs nix-remote-builder | tail -30
+        DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker logs nix-remote-builder | tail -20
         echo "ℹ️  Port check:"
         nc -z localhost 2222 && echo "Port 2222 is open" || echo "Port 2222 is not accessible"
-        echo "ℹ️  SSH debug attempt:"
-        timeout 5 ssh -i "$HOME/.ssh/nix-builder" -o StrictHostKeyChecking=no -o ConnectTimeout=3 -p 2222 -v root@localhost "echo test" 2>&1 | head -10
         exit 1
     fi
-    echo "   Testing SSH connection... (attempt $i/24, waiting for services to start)"
+    echo "   Testing SSH connection... (attempt $i/12)"
     sleep 5
 done
 
@@ -219,9 +181,10 @@ echo "✅ NixOS remote builder setup complete!"
 echo
 echo "📋 Configuration summary:"
 echo "  - Colima profile: $COLIMA_PROFILE ($COLIMA_ARCH)"
-echo "  - NixOS container: nix-remote-builder (NixOS with proper service management)"
+echo "  - NixOS container: nix-remote-builder (proper NixOS with systemd)"
 echo "  - SSH port: 2222"
 echo "  - SSH key: $HOME/.ssh/nix-builder"
+echo "  - Container image: $IMAGE_NAME"
 echo
 echo "🎯 Usage:"
 echo "  export DOCKER_HOST=\"unix://\$HOME/.colima/$COLIMA_PROFILE/docker.sock\""
@@ -231,6 +194,3 @@ echo "🔧 To start the builder later:"
 echo "  colima start $COLIMA_PROFILE"
 echo "  DOCKER_HOST=\"unix://\$HOME/.colima/$COLIMA_PROFILE/docker.sock\" docker start nix-remote-builder"
 echo
-
-# Clean up temporary file
-rm -f /tmp/init-nixos-builder.sh

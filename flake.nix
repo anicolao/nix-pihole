@@ -75,6 +75,17 @@
     
     images.rpi4 = nixosConfigurations.rpi4.config.system.build.sdImage;
 
+    # Remote builder NixOS configuration
+    nixosConfigurations.remote-builder = nixpkgs.lib.nixosSystem {
+      system = "aarch64-linux";
+      modules = [
+        ./builder/remote-builder-config.nix
+      ];
+    };
+
+    # Docker image for the remote builder
+    images.remote-builder = nixosConfigurations.remote-builder.config.system.build.dockerImage;
+
     packages.aarch64-linux.nixosConfigurations."${hostname}" = nixpkgs.lib.nixosSystem {
       system = "aarch64-linux";
       modules = [
