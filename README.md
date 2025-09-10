@@ -23,6 +23,11 @@ This repository contains a complete NixOS configuration that transforms a Raspbe
 ├── default-users.nix   # Default user configuration fallback
 ├── filesystems.nix     # Filesystem mount configuration
 ├── sdimage.nix         # SD card image build settings
+├── builder/            # Remote builder scripts for cross-compilation
+│   ├── setup-remote-builder.sh  # Set up Colima-based remote builder
+│   ├── test-remote-builder.sh   # Test remote builder functionality
+│   ├── make-image.sh            # Build images using remote builder
+│   └── README.md                # Remote builder documentation
 ├── modules/            # Modular configuration components
 │   ├── base-system.nix # Basic system settings (boot, locale, packages)
 │   ├── pihole.nix      # Pi-hole specific configuration
@@ -41,10 +46,51 @@ This repository contains a complete NixOS configuration that transforms a Raspbe
 ## Prerequisites
 
 - **Hardware**: Raspberry Pi 4 with microSD card (8GB+ recommended)
-- **Software**: NixOS system with flakes enabled
+- **Software**: 
+  - NixOS system with flakes enabled, OR
+  - macOS with Nix package manager (for remote builder setup)
 - **Network**: WiFi credentials or ethernet connection
 
+## Development Environment
+
+This repository provides a complete development environment with remote building capabilities:
+
+```bash
+# Enter development shell with all tools
+nix develop
+
+# Available tools:
+# - colima, docker, docker-compose (for remote building)
+# - nix, curl, jq, openssh (build tools)
+# - coreutils, bash, netcat, procps (utilities)
+```
+
+The development shell automatically configures Docker to use Colima's socket and provides helper commands for building images.
+
 ## Quick Start
+
+### Option A: Using Remote Builder (macOS with Colima)
+
+For macOS users who want to build aarch64-linux images locally:
+
+```bash
+# Clone the repository
+git clone https://github.com/anicolao/nix-pihole.git
+cd nix-pihole
+
+# Enter the development environment
+nix develop
+
+# Set up the remote builder
+./builder/setup-remote-builder.sh
+
+# Build the image using remote builder
+./builder/make-image.sh
+```
+
+The remote builder uses Colima to run an aarch64 VM with a NixOS container, enabling native aarch64-linux builds on macOS.
+
+### Option B: Traditional Build
 
 ### 1. Configuration Setup
 
