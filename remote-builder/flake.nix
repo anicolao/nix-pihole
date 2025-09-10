@@ -55,7 +55,14 @@
           let
             nixosBuilder = nixpkgs.lib.nixosSystem {
               system = builderSystem;
-              modules = [ ./builder.nix ];
+              modules = [
+                ./builder.nix
+                # We explicitly pass the nixpkgs flake input as a special argument
+                # to our modules. This allows us to refer to it in a way that
+                # is guaranteed to not depend on `config`, breaking the
+                # infinite recursion.
+                { _module.args = { flake-nixpkgs = nixpkgs; }; }
+              ];
             };
           in
           {
