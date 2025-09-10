@@ -57,11 +57,13 @@
               system = builderSystem;
               modules = [
                 ./builder.nix
-                # We explicitly pass the nixpkgs flake input as a special argument
-                # to our modules. This allows us to refer to it in a way that
-                # is guaranteed to not depend on `config`, breaking the
-                # infinite recursion.
-                { _module.args = { flake-nixpkgs = nixpkgs; }; }
+                # We pass the path to the docker-image module as a special string
+                # argument. This is the most robust way to break dependency cycles.
+                { _module.args = {
+                    docker-image-module-path =
+                      "${nixpkgs}/nixos/modules/virtualisation/docker-image.nix";
+                  };
+                }
               ];
             };
           in

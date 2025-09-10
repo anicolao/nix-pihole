@@ -1,16 +1,16 @@
 # remote-builder/builder.nix
-# We accept `flake-nixpkgs` as a special argument passed from our flake.
-{ config, pkgs, flake-nixpkgs, ... }:
+# We accept `docker-image-module-path` as a special argument passed from our flake.
+{ config, pkgs, docker-image-module-path, ... }:
 
 {
   # This configuration defines a minimal NixOS system that will run inside
   # a Docker container. It's designed to be a remote builder.
 
   # Import container-specific settings from nixpkgs.
-  # We use the explicitly passed `flake-nixpkgs` to refer to the nixpkgs source
-  # tree in a pure-evaluation-compatible way that avoids dependency cycles.
+  # We import the module using the path passed as a special argument,
+  # which is the most robust way to avoid dependency cycles.
   imports = [
-    "${flake-nixpkgs.path}/nixos/modules/virtualisation/docker-image.nix"
+    docker-image-module-path
   ];
 
   system.stateVersion = "23.11"; # Or a more recent version if available.
