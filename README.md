@@ -73,7 +73,7 @@ nano personal/alex_users.nix  # Modify usernames and settings as needed
 
 ### Remote Building with Colima (for non-aarch64 systems)
 
-If you are not running on an `aarch64-linux` system (e.g., you are on an Intel Mac), you can use the provided remote builder to build the `aarch64-linux` image. This setup uses [Colima](https://github.com/abiosoft/colima) to run an `aarch64` Linux VM and a Docker container to run the Nix daemon.
+If you are not running on an `aarch64-linux` system (e.g., you are on an Intel Mac), you can use the provided remote builder to build the `aarch64-linux` image. This setup uses [Colima](https://github.com/abiosoft/colima) to run an `aarch64` Linux VM, which in turn runs a fully-configured NixOS system in a Docker container to act as the builder.
 
 **Prerequisites:**
 
