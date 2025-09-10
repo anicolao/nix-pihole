@@ -6,9 +6,10 @@
   # a Docker container. It's designed to be a remote builder.
 
   # Import container-specific settings from nixpkgs.
-  # We use `pkgs.path` to refer to the nixpkgs source tree in a pure-evaluation-compatible way.
+  # We use `pkgs.nixosModules.docker-image` which is the idiomatic way to refer
+  # to this core module and avoids evaluation dependency cycles.
   imports = [
-    "${pkgs.path}/nixos/modules/virtualisation/docker-image.nix"
+    pkgs.nixosModules.docker-image
   ];
 
   system.stateVersion = "23.11"; # Or a more recent version if available.
