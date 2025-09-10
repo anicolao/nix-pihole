@@ -38,9 +38,9 @@
           ];
 
           shellHook = ''
-            # Point the Docker CLI to the socket managed by Colima
-            export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
-            echo "✅ DOCKER_HOST automatically set to Colima's socket."
+            # Point the Docker CLI to the socket managed by Colima for the remote-builder
+            export DOCKER_HOST="unix://$HOME/.colima/remote-builder/docker.sock"
+            echo "✅ DOCKER_HOST automatically set to the 'remote-builder' profile's socket."
             echo
             echo "Pi-hole RPi4 Image Builder Environment"
             echo "======================================"
