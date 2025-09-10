@@ -115,7 +115,7 @@ DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker run -d \
         
         # Start SSH daemon in foreground
         echo 'Starting SSH daemon...'
-        exec /usr/sbin/sshd -D -e
+        exec \$(which sshd) -D -e
     "
 
 # Check if container started successfully
