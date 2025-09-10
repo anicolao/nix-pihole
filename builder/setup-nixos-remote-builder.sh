@@ -96,7 +96,9 @@ if ! nix build .#images.remote-builder 2>/dev/null; then
 FROM nixos/nix:latest
 
 # Install required packages (avoiding git conflict with git-minimal already in base image)
-RUN nix-env -iA nixpkgs.openssh nixpkgs.shadow nixpkgs.curl
+# Install bash and busybox first to ensure shell availability
+RUN nix-env -iA nixpkgs.bash nixpkgs.busybox && \
+    nix-env -iA nixpkgs.openssh nixpkgs.shadow nixpkgs.curl
 
 # Create necessary directories
 RUN mkdir -p /root/.ssh /etc/ssh /run/sshd /var/log /var/empty /etc/nix
@@ -128,10 +130,12 @@ RUN echo 'Port 22' > /etc/ssh/sshd_config && \
     echo 'X11Forwarding no' >> /etc/ssh/sshd_config && \
     echo 'PrintMotd no' >> /etc/ssh/sshd_config
 
-# Create startup script
-RUN echo '#!/bin/sh' > /bin/init-container.sh && \
+# Create startup script with proper PATH
+RUN echo '#!/nix/var/nix/profiles/default/bin/bash' > /bin/init-container.sh && \
     echo 'set -e' >> /bin/init-container.sh && \
+    echo 'export PATH="/nix/var/nix/profiles/default/bin:$PATH"' >> /bin/init-container.sh && \
     echo 'echo "Starting Nix Remote Builder Container..."' >> /bin/init-container.sh && \
+    echo 'echo "PATH: $PATH"' >> /bin/init-container.sh && \
     echo 'echo "Starting Nix daemon..."' >> /bin/init-container.sh && \
     echo 'nix-daemon &' >> /bin/init-container.sh && \
     echo 'sleep 2' >> /bin/init-container.sh && \
@@ -140,7 +144,7 @@ RUN echo '#!/bin/sh' > /bin/init-container.sh && \
     chmod +x /bin/init-container.sh
 
 EXPOSE 22
-CMD ["/bin/init-container.sh"]
+CMD ["/nix/var/nix/profiles/default/bin/bash", "/bin/init-container.sh"]
 EOF
         
         echo "🏗️  Building Docker image with emulation..."
