@@ -83,15 +83,27 @@ echo "📦 Building NixOS container with proper SSH configuration..."
 if ! nix build .#images.remote-builder --system aarch64-linux; then
     echo "❌ Failed to build NixOS container image"
     echo "ℹ️  Make sure you have a remote builder configured or are on an aarch64 system"
+    echo "ℹ️  You can also use the improved container approach: ./setup-remote-builder.sh"
     exit 1
 fi
 
 # Load the built image into Docker
 echo "📤 Loading NixOS container image into Docker..."
-DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker load < result
+if [ -f result ]; then
+    DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker load < result
+else
+    echo "❌ Build result not found"
+    exit 1
+fi
 
 # Get the image ID/name from the loaded image
-IMAGE_NAME=$(DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker images --format "table {{.Repository}}:{{.Tag}}" | grep -v "REPOSITORY" | head -n1 | tr -d ' ')
+IMAGE_NAME=$(DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker images --format "{{.Repository}}:{{.Tag}}" | grep "nix-remote-builder" | head -n1)
+if [ -z "$IMAGE_NAME" ]; then
+    echo "❌ Failed to find the built image"
+    echo "Available images:"
+    DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker images
+    exit 1
+fi
 
 echo "🐳 Setting up NixOS container for remote building..."
 
@@ -105,7 +117,7 @@ if [ ! -f "$HOME/.ssh/nix-builder" ]; then
     echo "🔑 Generated SSH key: $HOME/.ssh/nix-builder"
 fi
 
-echo "🚀 Starting NixOS container with proper SSH configuration..."
+echo "🚀 Starting NixOS container with declarative SSH configuration..."
 DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker run -d \
     --name nix-remote-builder \
     --platform linux/arm64 \
@@ -114,9 +126,9 @@ DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker run -d \
     -v nix-store:/nix \
     "$IMAGE_NAME"
 
-# Wait a moment for the container to start
+# Wait a moment for the container to start and initialize
 echo "⏳ Waiting for NixOS container to initialize..."
-sleep 10
+sleep 15
 
 # Check if container started successfully
 if ! DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker ps | grep -q nix-remote-builder; then

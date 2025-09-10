@@ -75,16 +75,116 @@
     
     images.rpi4 = nixosConfigurations.rpi4.config.system.build.sdImage;
 
-    # Remote builder NixOS configuration
-    nixosConfigurations.remote-builder = nixpkgs.lib.nixosSystem {
-      system = "aarch64-linux";
-      modules = [
-        ./builder/remote-builder-config.nix
-      ];
-    };
+    # Docker image for the remote builder using nixpkgs.dockerTools
+    images.remote-builder = 
+      let
+        pkgs-aarch64 = import nixpkgs { 
+          system = "aarch64-linux"; 
+          config = { allowUnfree = true; };
+        };
+      in
+      pkgs-aarch64.dockerTools.buildImage {
+        name = "nix-remote-builder";
+        tag = "latest";
+        
+        contents = with pkgs-aarch64; [
+          # Essential system packages
+          busybox  # Provides basic shell and utilities
+          nix
+          openssh
+          shadow   # For user management
+          systemd  # For service management
+          
+          # Development tools commonly needed for building
+          git
+          curl
+          bash
+          coreutils
+          findutils
+          gnugrep
+          gnused
+          gawk
+          which
+        ];
 
-    # Docker image for the remote builder
-    images.remote-builder = nixosConfigurations.remote-builder.config.system.build.dockerImage;
+        # Set up the basic container configuration
+        config = {
+          Env = [
+            "PATH=/run/wrappers/bin:/root/.nix-profile/bin:/etc/profiles/per-user/root/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin"
+            "NIX_SSL_CERT_FILE=${pkgs-aarch64.cacert}/etc/ssl/certs/ca-bundle.crt"
+          ];
+          ExposedPorts = {
+            "22/tcp" = {};
+          };
+          Cmd = [ "/bin/init-container.sh" ];
+        };
+
+        # Create the initialization script
+        runAsRoot = ''
+          #!${pkgs-aarch64.runtimeShell}
+          
+          # Create essential directories
+          mkdir -p /root/.ssh /etc/ssh /run/sshd /var/log /var/empty /nix/var/nix/daemon-socket
+          
+          # Generate SSH host keys
+          ${pkgs-aarch64.openssh}/bin/ssh-keygen -t rsa -b 2048 -f /etc/ssh/ssh_host_rsa_key -N ""
+          ${pkgs-aarch64.openssh}/bin/ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N ""
+          ${pkgs-aarch64.openssh}/bin/ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
+          
+          # Create sshd_config
+          cat > /etc/ssh/sshd_config << 'EOF'
+          Port 22
+          AddressFamily any
+          ListenAddress 0.0.0.0
+          
+          HostKey /etc/ssh/ssh_host_rsa_key
+          HostKey /etc/ssh/ssh_host_ecdsa_key
+          HostKey /etc/ssh/ssh_host_ed25519_key
+          
+          PermitRootLogin yes
+          PasswordAuthentication no
+          PubkeyAuthentication yes
+          AuthorizedKeysFile .ssh/authorized_keys
+          
+          UsePAM no
+          X11Forwarding no
+          PrintMotd no
+          AcceptEnv LANG LC_*
+          Subsystem sftp ${pkgs-aarch64.openssh}/libexec/sftp-server
+          EOF
+          
+          # Create nix.conf with remote builder settings
+          mkdir -p /etc/nix
+          cat > /etc/nix/nix.conf << 'EOF'
+          experimental-features = nix-command flakes
+          trusted-users = root
+          auto-optimise-store = true
+          substituters = https://cache.nixos.org/
+          trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+          EOF
+          
+          # Create the container initialization script
+          cat > /bin/init-container.sh << 'EOF'
+          #!/bin/sh
+          set -e
+          
+          echo "Starting Nix Remote Builder Container..."
+          
+          # Start the Nix daemon in the background
+          echo "Starting Nix daemon..."
+          ${pkgs-aarch64.nix}/bin/nix-daemon &
+          
+          # Wait a moment for the daemon to start
+          sleep 2
+          
+          # Start SSH daemon
+          echo "Starting SSH daemon..."
+          exec ${pkgs-aarch64.openssh}/bin/sshd -D -e
+          EOF
+          
+          chmod +x /bin/init-container.sh
+        '';
+      };
 
     packages.aarch64-linux.nixosConfigurations."${hostname}" = nixpkgs.lib.nixosSystem {
       system = "aarch64-linux";
