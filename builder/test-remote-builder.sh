@@ -45,7 +45,7 @@ if docker info > /dev/null 2>&1; then
     echo "✅ Docker connection successful"
     
     # Show basic info
-    DOCKER_ARCH=$(docker info --format '{{.Architecture}}')
+    DOCKER_ARCH=$(docker info --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
     echo "  Architecture: $DOCKER_ARCH"
 else
     echo "❌ Docker connection failed"
@@ -106,11 +106,12 @@ fi
 
 echo "📊 Remote builder system information:"
 ssh -i "$HOME/.ssh/nix-builder" -o StrictHostKeyChecking=no -p 2222 root@localhost "
-    echo '  OS: \$(uname -a)'
-    echo '  Architecture: \$(uname -m)'
-    echo '  Available memory: \$(free -h | grep Mem | awk \"{print \\\$2}\")'
-    echo '  Disk space: \$(df -h / | tail -1 | awk \"{print \\\$4}\")'
-    echo '  Nix store: \$(du -sh /nix 2>/dev/null || echo \"calculating...\")'" 2>/dev/null || echo "  Unable to get system info"
+    echo '  OS: '\$(uname -a)
+    echo '  Architecture: '\$(uname -m)
+    echo '  Available memory: '\$(free -h 2>/dev/null | grep Mem | awk '{print \$2}' || echo 'unknown')
+    echo '  Disk space: '\$(df -h / 2>/dev/null | tail -1 | awk '{print \$4}' || echo 'unknown')
+    echo '  Nix store: '\$(du -sh /nix 2>/dev/null | cut -f1 || echo 'calculating...')
+" 2>/dev/null || echo "  Unable to get system info"
 
 echo
 echo "🎯 Testing Nix remote builder configuration..."

@@ -5,6 +5,10 @@ emu2/test-*.img
 emu2/*.log
 emu2/.direnv/
 
+# Remote builder temporary files
+builder/*.log
+builder/test-*.img
+
 # Secrets file containing sensitive configuration
 secrets.nix
 
