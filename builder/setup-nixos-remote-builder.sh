@@ -31,6 +31,12 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
+# Ensure Docker buildx is available for multi-platform builds
+if ! DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker buildx version &> /dev/null 2>&1 && ! docker buildx version &> /dev/null 2>&1; then
+    echo "ℹ️  Setting up Docker buildx for multi-platform support..."
+    # This will be attempted later when we need it
+fi
+
 echo "🔍 Checking existing Colima profile..."
 if colima list | grep -q "$COLIMA_PROFILE"; then
     echo "⚠️  Colima profile '$COLIMA_PROFILE' already exists"
@@ -80,29 +86,113 @@ echo "🏗️  Building NixOS remote builder container image..."
 
 # Build the NixOS container image
 echo "📦 Building NixOS container with proper SSH configuration..."
-if ! nix build .#images.remote-builder --system aarch64-linux; then
-    echo "❌ Failed to build NixOS container image"
-    echo "ℹ️  Make sure you have a remote builder configured or are on an aarch64 system"
-    echo "ℹ️  You can also use the improved container approach: ./setup-remote-builder.sh"
-    exit 1
-fi
+# Try to build natively first, then fall back to using Docker emulation
+if ! nix build .#images.remote-builder 2>/dev/null; then
+    echo "ℹ️  Native build failed, building with Docker emulation support..."
+    # Use Docker's buildx with emulation as a fallback
+    if command -v docker &> /dev/null; then
+        echo "🔧 Creating temporary Dockerfile for NixOS remote builder..."
+        cat > /tmp/Dockerfile.nix-builder << 'EOF'
+FROM nixos/nix:latest
 
-# Load the built image into Docker
-echo "📤 Loading NixOS container image into Docker..."
-if [ -f result ]; then
-    DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker load < result
+# Install required packages
+RUN nix-env -iA nixpkgs.openssh nixpkgs.shadow nixpkgs.git nixpkgs.curl
+
+# Create necessary directories
+RUN mkdir -p /root/.ssh /etc/ssh /run/sshd /var/log /var/empty /etc/nix
+
+# Configure Nix
+RUN echo 'experimental-features = nix-command flakes' > /etc/nix/nix.conf && \
+    echo 'trusted-users = root' >> /etc/nix/nix.conf && \
+    echo 'auto-optimise-store = true' >> /etc/nix/nix.conf && \
+    echo 'substituters = https://cache.nixos.org/' >> /etc/nix/nix.conf && \
+    echo 'trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=' >> /etc/nix/nix.conf
+
+# Generate SSH host keys and create config
+RUN ssh-keygen -t rsa -b 2048 -f /etc/ssh/ssh_host_rsa_key -N "" && \
+    ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N "" && \
+    ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
+
+# Create sshd configuration
+RUN echo 'Port 22' > /etc/ssh/sshd_config && \
+    echo 'AddressFamily any' >> /etc/ssh/sshd_config && \
+    echo 'ListenAddress 0.0.0.0' >> /etc/ssh/sshd_config && \
+    echo 'HostKey /etc/ssh/ssh_host_rsa_key' >> /etc/ssh/sshd_config && \
+    echo 'HostKey /etc/ssh/ssh_host_ecdsa_key' >> /etc/ssh/sshd_config && \
+    echo 'HostKey /etc/ssh/ssh_host_ed25519_key' >> /etc/ssh/sshd_config && \
+    echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && \
+    echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config && \
+    echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config && \
+    echo 'AuthorizedKeysFile .ssh/authorized_keys' >> /etc/ssh/sshd_config && \
+    echo 'UsePAM no' >> /etc/ssh/sshd_config && \
+    echo 'X11Forwarding no' >> /etc/ssh/sshd_config && \
+    echo 'PrintMotd no' >> /etc/ssh/sshd_config
+
+# Create startup script
+RUN echo '#!/bin/sh' > /bin/init-container.sh && \
+    echo 'set -e' >> /bin/init-container.sh && \
+    echo 'echo "Starting Nix Remote Builder Container..."' >> /bin/init-container.sh && \
+    echo 'echo "Starting Nix daemon..."' >> /bin/init-container.sh && \
+    echo 'nix-daemon &' >> /bin/init-container.sh && \
+    echo 'sleep 2' >> /bin/init-container.sh && \
+    echo 'echo "Starting SSH daemon..."' >> /bin/init-container.sh && \
+    echo 'exec $(which sshd) -D -e' >> /bin/init-container.sh && \
+    chmod +x /bin/init-container.sh
+
+EXPOSE 22
+CMD ["/bin/init-container.sh"]
+EOF
+        
+        echo "🏗️  Building Docker image with emulation..."
+        # First, ensure buildx is set up
+        DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker buildx create --use --name nix-builder 2>/dev/null || true
+        
+        # Build the image using buildx for arm64 platform
+        if DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker buildx build \
+            --platform linux/arm64 \
+            -t nix-remote-builder:latest \
+            --load \
+            -f /tmp/Dockerfile.nix-builder \
+            /tmp; then
+            echo "✅ Docker image built successfully with emulation"
+        else
+            echo "⚠️  Buildx failed, trying regular Docker build..."
+            DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker build \
+                -t nix-remote-builder:latest \
+                -f /tmp/Dockerfile.nix-builder \
+                /tmp
+        fi
+        
+        # Clean up temp file
+        rm -f /tmp/Dockerfile.nix-builder
+    else
+        echo "❌ Failed to build NixOS container image"
+        echo "ℹ️  Neither Nix cross-compilation nor Docker is available"
+        echo "ℹ️  You can use the working container approach instead:"
+        echo "     ./setup-remote-builder.sh"
+        exit 1
+    fi
 else
-    echo "❌ Build result not found"
-    exit 1
+    echo "✅ Nix build successful"
 fi
 
-# Get the image ID/name from the loaded image
-IMAGE_NAME=$(DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker images --format "{{.Repository}}:{{.Tag}}" | grep "nix-remote-builder" | head -n1)
-if [ -z "$IMAGE_NAME" ]; then
-    echo "❌ Failed to find the built image"
-    echo "Available images:"
-    DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker images
-    exit 1
+# Load the built image into Docker (only if we used Nix build)
+if [ -f result ]; then
+    echo "📤 Loading NixOS container image into Docker..."
+    DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker load < result
+    
+    # Get the image ID/name from the loaded image
+    IMAGE_NAME=$(DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker images --format "{{.Repository}}:{{.Tag}}" | grep "nix-remote-builder" | head -n1)
+    if [ -z "$IMAGE_NAME" ]; then
+        echo "❌ Failed to find the built image"
+        echo "Available images:"
+        DOCKER_HOST="unix://$HOME/.colima/$COLIMA_PROFILE/docker.sock" docker images
+        exit 1
+    fi
+else
+    # Image was built with Docker, use the tag we specified
+    IMAGE_NAME="nix-remote-builder:latest"
+    echo "ℹ️  Using Docker-built image: $IMAGE_NAME"
 fi
 
 echo "🐳 Setting up NixOS container for remote building..."
