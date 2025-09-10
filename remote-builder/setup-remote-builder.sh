@@ -20,7 +20,7 @@ if ! docker ps --filter "name=nix-remote-builder" --format "{{.Names}}" | grep -
   docker run -d --name nix-remote-builder \
     -v nix-store:/nix/store \
     -p 30022:22 \
-    nixos/nix:latest /usr/sbin/sshd -D -e
+    nixos/nix:latest sshd -D -e
   echo "Nix daemon container started."
 else
   echo "Nix daemon container is already running."
