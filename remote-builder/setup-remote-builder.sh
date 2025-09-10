@@ -16,11 +16,14 @@ echo "Starting Nix daemon container..."
 if ! docker ps --filter "name=nix-remote-builder" --format "{{.Names}}" | grep -q "nix-remote-builder"; then
   echo "Starting Nix daemon container with SSH..."
   # We need to run sshd in the foreground to keep the container alive.
-  # The -D flag runs the daemon in the foreground, and -e logs to stderr.
+  # We need to find the absolute path to sshd inside the container and use that,
+  # as sshd refuses to start otherwise. 'which' will find it in the $PATH.
+  # We use 'sh -c' to execute this command inside the container, and 'exec'
+  # to make sshd the main process, which is important for signal handling.
   docker run -d --name nix-remote-builder \
     -v nix-store:/nix/store \
     -p 30022:22 \
-    nixos/nix:latest sshd -D -e
+    nixos/nix:latest sh -c 'exec $(which sshd) -D -e'
   echo "Nix daemon container started."
 else
   echo "Nix daemon container is already running."
