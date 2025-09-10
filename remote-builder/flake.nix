@@ -7,28 +7,13 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
-    let
-      # The system architecture for our remote builder.
-      builderSystem = "aarch64-linux";
-
-      # Create a NixOS system configuration for our builder.
-      nixosBuilder = nixpkgs.lib.nixosSystem {
-        system = builderSystem;
-        modules = [ ./builder.nix ];
-      };
-    in
-    {
-      # The package that builds the Docker image for our builder.
-      packages.${builderSystem}.builder-image = nixosBuilder.config.system.build.dockerImage;
-
-      # A default alias for convenience.
-      packages.${builderSystem}.default = self.packages.${builderSystem}.builder-image;
-    } // flake-utils.lib.eachDefaultSystem (system:
+    flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        builderSystem = "aarch64-linux";
       in
       {
-        # The development shell for the host machine.
+        # The development shell is available on all supported host systems.
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             colima
@@ -64,5 +49,22 @@
             echo
           '';
         };
-      });
+      } // (
+        # The builder package is only defined for the aarch64-linux system.
+        if system == builderSystem then
+          let
+            nixosBuilder = nixpkgs.lib.nixosSystem {
+              system = builderSystem;
+              modules = [ ./builder.nix ];
+            };
+          in
+          {
+            packages = {
+              builder-image = nixosBuilder.config.system.build.dockerImage;
+              default = self.packages.${system}.builder-image;
+            };
+          }
+        else {}
+      )
+    );
 }
