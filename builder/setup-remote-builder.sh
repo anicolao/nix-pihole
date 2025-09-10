@@ -10,8 +10,8 @@ echo
 # Configuration
 COLIMA_PROFILE="nix-builder"
 COLIMA_ARCH="aarch64"
-COLIMA_MEMORY="4GB"
-COLIMA_DISK="20GB"
+COLIMA_MEMORY="4"
+COLIMA_DISK="20"
 COLIMA_CPU="4"
 
 # Check if colima is available
