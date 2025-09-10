@@ -14,10 +14,13 @@ fi
 # 2. Start Nix daemon container
 echo "Starting Nix daemon container..."
 if ! docker ps --filter "name=nix-remote-builder" --format "{{.Names}}" | grep -q "nix-remote-builder"; then
+  echo "Starting Nix daemon container with SSH..."
+  # We need to run sshd in the foreground to keep the container alive.
+  # The -D flag runs the daemon in the foreground, and -e logs to stderr.
   docker run -d --name nix-remote-builder \
     -v nix-store:/nix/store \
     -p 30022:22 \
-    nixos/nix:latest
+    nixos/nix:latest /usr/sbin/sshd -D -e
   echo "Nix daemon container started."
 else
   echo "Nix daemon container is already running."
