@@ -5,12 +5,12 @@ set -e # Exit immediately if a command fails
 MACHINE_TYPE="raspi4b"
 CPU_TYPE="cortex-a72"
 DTB_FILE="bcm2711-rpi-4-b.dtb" # Device Tree Blob for Pi 4 Model B
-KERNEL_FILE="kernel8.img"      # 64-bit kernel image name
+KERNEL_FILE="u-boot-rpi4.bin"  # U-Boot binary for Raspberry Pi 4
 SSH_FORWARD_PORT="5022"        # Host port to forward to the VM's SSH port 22
 
 # --- Helper functions ---
 show_help() {
-    cat << EOF
+		cat <<EOF
 Usage: $0 [OPTIONS] /path/to/raspberry-pi.img
 
 Launch a Raspberry Pi 4 emulator using QEMU.
@@ -28,7 +28,7 @@ EXAMPLES:
     $0 --dry-run raspios-lite.img
 
 The script will:
-1. Extract kernel and device tree files from the image
+1. Extract device tree files and use u-boot for booting
 2. Launch QEMU with Raspberry Pi 4 emulation
 3. Forward SSH from localhost:PORT to the VM
 4. Clean up temporary files when done
@@ -44,7 +44,7 @@ mount_image_linux() {
     local image="$1"
     local mount_point
     
-    echo "✅ Setting up loop device for disk image..."
+	echo "✅ Setting up loop device for disk image..." >&2
     
     # Create loop device for the image
     LOOP_DEVICE=$(sudo losetup --find --show --partscan "$image")
@@ -53,7 +53,7 @@ mount_image_linux() {
     if [[ -e "${LOOP_DEVICE}p1" ]]; then
         BOOT_PARTITION="${LOOP_DEVICE}p1"
     else
-        echo "❌ Could not find boot partition on $LOOP_DEVICE"
+		echo "❌ Could not find boot partition on $LOOP_DEVICE" >&2
         sudo losetup -d "$LOOP_DEVICE"
         exit 1
     fi
@@ -61,7 +61,7 @@ mount_image_linux() {
     # Create temporary mount point
     mount_point=$(mktemp -d)
     
-    echo "✅ Mounting boot partition..."
+	echo "✅ Mounting boot partition..." >&2
     sudo mount "$BOOT_PARTITION" "$mount_point"
     
     echo "$mount_point"
@@ -70,10 +70,10 @@ mount_image_linux() {
 unmount_image_linux() {
     local mount_point="$1"
     
-    echo "✅ Unmounting boot partition..."
+	  echo "✅ Unmounting boot partition..." >&2
     sudo umount "$mount_point"
     
-    echo "✅ Detaching loop device..."
+		echo "✅ Detaching loop device..." >&2
     sudo losetup -d "$LOOP_DEVICE"
     
     # Clean up mount point
@@ -83,12 +83,12 @@ unmount_image_linux() {
 mount_image_macos() {
     local image="$1"
     
-    echo "✅ Attaching disk image to extract boot files..."
+		echo "✅ Attaching disk image to extract boot files..." >&2
     # Attach the raw disk image and find the mount point of the boot partition
-    BOOT_MOUNT=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage "$image" | grep 'FDisk_partition_scheme' | cut -f3)
+		BOOT_MOUNT=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage "$image" | grep 'Volume' | cut -f3)
     
     if [[ -z "$BOOT_MOUNT" ]]; then
-        echo "❌ Failed to mount the boot partition. Is the image valid?"
+				echo "❌ Failed to mount the boot partition. Is the image valid?" >&2
         exit 1
     fi
     
@@ -98,7 +98,7 @@ mount_image_macos() {
 unmount_image_macos() {
     local mount_point="$1"
     
-    echo "✅ Detaching disk image..."
+		echo "✅ Detaching disk image..." >&2
     hdiutil detach "$mount_point"
 }
 
@@ -125,8 +125,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -*)
-            echo "Unknown option: $1"
-            echo "Use --help for usage information."
+						echo "Unknown option: $1" >&2
+						echo "Use --help for usage information." >&2
             exit 1
             ;;
         *)
@@ -138,20 +138,20 @@ done
 
 # --- Validate arguments ---
 if [[ -z "$DISK_IMAGE" ]]; then
-    echo "Error: No disk image specified"
-    echo "Usage: $0 [OPTIONS] /path/to/raspberry-pi.img"
-    echo "Use --help for more information."
+		echo "Error: No disk image specified" >&2
+		echo "Usage: $0 [OPTIONS] /path/to/raspberry-pi.img" >&2
+		echo "Use --help for more information." >&2
     exit 1
 fi
 
 if [[ ! -f "$DISK_IMAGE" ]]; then
-    echo "❌ Disk image not found: $DISK_IMAGE"
+		echo "❌ Disk image not found: $DISK_IMAGE" >&2
     exit 1
 fi
 
 # --- Apply Pi 3 fallback configuration if requested ---
 if [[ "$USE_PI3" == "true" ]]; then
-    echo "🔄 Using Raspberry Pi 3 fallback configuration..."
+		echo "🔄 Using Raspberry Pi 3 fallback configuration..." >&2
     MACHINE_TYPE="raspi3b"
     DTB_FILE="bcm2710-rpi-3-b-plus.dtb"
 fi
@@ -161,17 +161,17 @@ WORKDIR=$(pwd)
 
 # For dry-run mode, we can skip the actual mounting and just simulate
 if [[ "$DRY_RUN" == "true" ]]; then
-    echo "🔍 Dry-run mode: Validating image and showing command..."
-    echo "✅ Image file exists: $DISK_IMAGE"
-    echo "✅ Would extract kernel files from image"
-    echo "✅ Would copy $DTB_FILE and $KERNEL_FILE to $WORKDIR"
+		echo "🔍 Dry-run mode: Validating image and showing command..." >&2
+		echo "✅ Image file exists: $DISK_IMAGE" >&2
+		echo "✅ Would extract device tree files and use u-boot kernel" >&2
+		echo "✅ Would copy $DTB_FILE and $KERNEL_FILE to $WORKDIR" >&2
     
     # Create fake temporary files for dry-run
     touch "$WORKDIR/$DTB_FILE" "$WORKDIR/$KERNEL_FILE"
     
     # Set up cleanup for dry-run
     cleanup() {
-        echo "🧹 Cleaning up temporary files from dry-run..."
+				echo "🧹 Cleaning up temporary files from dry-run..." >&2
         rm -f "$WORKDIR/$DTB_FILE" "$WORKDIR/$KERNEL_FILE"
     }
     trap cleanup EXIT
@@ -193,22 +193,23 @@ else
         
         # Clean up temporary boot files
         if [[ -f "$WORKDIR/$DTB_FILE" ]]; then
-            echo "🧹 Cleaning up temporary boot files..."
+            echo "🧹 Cleaning up temporary boot files..." >&2
             rm -f "$WORKDIR/$DTB_FILE" "$WORKDIR/$KERNEL_FILE"
         fi
     }
     trap cleanup EXIT
 
-    echo "✅ Copying kernel and DTB from the image..."
+		echo "✅ Copying device tree from image and using u-boot kernel..." >&2
     if [[ ! -f "$BOOT_MOUNT/$DTB_FILE" ]]; then
-        echo "❌ Device tree file not found: $BOOT_MOUNT/$DTB_FILE"
-        echo "   This might not be a valid Raspberry Pi image."
+				echo "❌ Device tree file not found: $BOOT_MOUNT/$DTB_FILE" >&2
+				echo "   This might not be a valid Raspberry Pi image." >&2
         exit 1
     fi
 
     if [[ ! -f "$BOOT_MOUNT/$KERNEL_FILE" ]]; then
-        echo "❌ Kernel file not found: $BOOT_MOUNT/$KERNEL_FILE"
-        echo "   This might not be a valid Raspberry Pi image."
+				echo "❌ U-Boot file not found: $BOOT_MOUNT/$KERNEL_FILE" >&2
+				echo "   Looking for u-boot-rpi4.bin in the boot partition." >&2
+				echo "   This might not be a valid Raspberry Pi image with u-boot." >&2
         exit 1
     fi
 
@@ -220,19 +221,18 @@ else
     BOOT_MOUNT=""
 fi
 
-
-
-echo "🚀 Launching QEMU ($(if [[ "$USE_PI3" == "true" ]]; then echo "Pi 3"; else echo "Pi 4"; fi) Emulation)..."
-echo "   Connect via SSH: ssh pi@localhost -p $SSH_FORWARD_PORT"
-echo "   To exit, press Ctrl-A then X."
-echo ""
+RAM_SIZE=2G
+echo "🚀 Launching QEMU ($(if [[ "$USE_PI3" == "true" ]]; then RAM_SIZE=1G; echo "Pi 3"; else echo "Pi 4"; fi) Emulation)..." >&2
+echo "   Connect via SSH: ssh pi@localhost -p $SSH_FORWARD_PORT" >&2
+echo "   To exit, press Ctrl-A then X." >&2
+echo "" >&2
 
 # Build QEMU command
 QEMU_CMD=(
     qemu-system-aarch64
     -M "$MACHINE_TYPE"
     -cpu "$CPU_TYPE"
-    -m 2G
+    -m "${RAM_SIZE}"
     -smp 4
     -dtb "$WORKDIR/$DTB_FILE"
     -kernel "$WORKDIR/$KERNEL_FILE"
@@ -244,12 +244,12 @@ QEMU_CMD=(
 )
 
 if [[ "$DRY_RUN" == "true" ]]; then
-    echo "Dry run - would execute:"
+		echo "Dry run - would execute:" >&2
     printf '%q ' "${QEMU_CMD[@]}"
-    echo ""
+		echo "" >&2
 else
     # Launch the VM using the extracted files and the original image as the SD card
     "${QEMU_CMD[@]}"
-    echo ""
-    echo "✅ VM shut down."
+		echo "" >&2
+		echo "✅ VM shut down." >&2
 fi
