@@ -64,7 +64,8 @@ The new `emu2/` directory contains a complete emulation framework that addresses
 2. **Direct usage:**
    ```bash
    # Build image from repository root
-   nix build .#images.rpi4
+   nix build .#images.rpi4      # For Pi 4
+   nix build .#images.rpi3bplus # For Pi 3B+
    
    # Run emulation
    cd emu2/

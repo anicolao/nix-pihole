@@ -1,10 +1,10 @@
 # NixOS Pi-hole Configuration
 
-A NixOS configuration for setting up a Pi-hole DNS sinkhole on a Raspberry Pi 4, providing network-wide ad blocking and DNS filtering.
+A NixOS configuration for setting up a Pi-hole DNS sinkhole on Raspberry Pi devices (Pi 3B+ and Pi 4), providing network-wide ad blocking and DNS filtering.
 
 ## Overview
 
-This repository contains a complete NixOS configuration that transforms a Raspberry Pi 4 into a dedicated Pi-hole server. Pi-hole acts as a DNS sinkhole, blocking advertisements and tracking domains at the network level, providing faster browsing and enhanced privacy for all devices on your network.
+This repository contains a complete NixOS configuration that transforms a Raspberry Pi (3B+ or 4) into a dedicated Pi-hole server. Pi-hole acts as a DNS sinkhole, blocking advertisements and tracking domains at the network level, providing faster browsing and enhanced privacy for all devices on your network.
 
 ## Features
 
@@ -40,7 +40,7 @@ This repository contains a complete NixOS configuration that transforms a Raspbe
 
 ## Prerequisites
 
-- **Hardware**: Raspberry Pi 4 with microSD card (8GB+ recommended)
+- **Hardware**: Raspberry Pi 3B+ or Pi 4 with microSD card (8GB+ recommended)
 - **Software**: NixOS system with flakes enabled
 - **Network**: WiFi credentials or ethernet connection
 
@@ -73,8 +73,9 @@ nano personal/alex_users.nix  # Modify usernames and settings as needed
 
 ### 2. Building an SD Card Image
 
-To create a bootable SD card image for your Raspberry Pi 4:
+To create a bootable SD card image for your Raspberry Pi:
 
+#### For Raspberry Pi 4:
 ```bash
 # Build the SD card image
 nix build path:$PWD#images.rpi4
@@ -83,9 +84,18 @@ nix build path:$PWD#images.rpi4
 sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
 ```
 
+#### For Raspberry Pi 3B+:
+```bash
+# Build the SD card image
+nix build path:$PWD#images.rpi3bplus
+
+# Flash the image to your SD card
+sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
+```
+
 ### 3. Initial Setup
 
-1. Insert the SD card into your Raspberry Pi 4
+1. Insert the SD card into your Raspberry Pi (3B+ or 4)
 2. Power on the device
 3. The system will automatically connect to the configured WiFi network
 4. Find the Pi's IP address on your network
@@ -207,11 +217,15 @@ pihole.service.interface = "eth0";  # For Raspberry Pi ethernet
 # Check flake configuration
 nix flake check
 
-# Build the system configuration
+# Build the system configuration for Pi 4
 nix build .#nixosConfigurations.rpi4.config.system.build.toplevel
 
-# Build just the SD image
-nix build path:$PWD#images.rpi4
+# Build the system configuration for Pi 3B+
+nix build .#nixosConfigurations.rpi3bplus.config.system.build.toplevel
+
+# Build SD images
+nix build path:$PWD#images.rpi4      # For Pi 4
+nix build path:$PWD#images.rpi3bplus # For Pi 3B+
 ```
 
 ### Updating Dependencies
@@ -221,7 +235,8 @@ nix build path:$PWD#images.rpi4
 nix flake update
 
 # Rebuild with new dependencies
-nix build path:$PWD#images.rpi4
+nix build path:$PWD#images.rpi4      # For Pi 4
+nix build path:$PWD#images.rpi3bplus # For Pi 3B+
 ```
 
 ## Troubleshooting

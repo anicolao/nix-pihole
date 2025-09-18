@@ -58,13 +58,15 @@ nix develop
 ./launch-pi.sh raspios-lite.img
 
 # New way (emu2/)
-./launch-direct.sh nixos-sd-image-rpi4.img
+./launch-direct.sh nixos-sd-image-rpi4.img     # For Pi 4
+./launch-direct.sh nixos-sd-image-rpi3bplus.img # For Pi 3B+
 ```
 
 ### 3. Build NixOS images instead of using generic ones
 ```bash
 # Build NixOS image from repository root
-nix build .#images.rpi4
+nix build .#images.rpi4      # For Pi 4
+nix build .#images.rpi3bplus # For Pi 3B+
 
 # Use the built image
 cd emu2/

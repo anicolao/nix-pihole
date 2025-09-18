@@ -1,5 +1,5 @@
 {
-  description = "Build Raspberry PI 4 image";
+  description = "Build Raspberry Pi images for Pi 3B+ and Pi 4";
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
@@ -20,6 +20,17 @@
       ];
     };
     images.rpi4 = nixosConfigurations.rpi4.config.system.build.sdImage;
+
+    nixosConfigurations.rpi3bplus = nixpkgs.lib.nixosSystem {
+      system = "aarch64-linux";
+      modules = [
+        "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
+        ./sdimage.nix
+        userConfig
+        ./configuration.nix
+      ];
+    };
+    images.rpi3bplus = nixosConfigurations.rpi3bplus.config.system.build.sdImage;
 
     packages.aarch64-linux.nixosConfigurations."${hostname}" = nixpkgs.lib.nixosSystem {
       system = "aarch64-linux";

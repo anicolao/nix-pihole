@@ -1,4 +1,4 @@
-# Direct-Boot Raspberry Pi 4 Emulation (emu2)
+# Direct-Boot Raspberry Pi Emulation (emu2)
 
 This directory contains a **simplified, robust emulation framework** designed specifically for NixOS Raspberry Pi images built by this repository. Unlike the original `emu/` approach, this framework boots images directly without file extraction, just like real hardware.
 
@@ -21,7 +21,8 @@ This directory contains a **simplified, robust emulation framework** designed sp
 
 2. **Build a NixOS image** (from repository root):
    ```bash
-   nix build .#images.rpi4
+   nix build .#images.rpi4      # For Pi 4
+   nix build .#images.rpi3bplus # For Pi 3B+
    ```
 
 3. **Launch the emulator:**
@@ -56,7 +57,8 @@ Unlike the original `emu/` that extracts kernel and device tree files:
 
 ### Basic Usage
 ```bash
-./launch-direct.sh nixos-sd-image-rpi4.img
+./launch-direct.sh nixos-sd-image-rpi4.img     # For Pi 4 images
+./launch-direct.sh nixos-sd-image-rpi3bplus.img # For Pi 3B+ images
 ```
 
 ### Custom SSH Port
@@ -99,7 +101,7 @@ Unlike the original `emu/` that extracts kernel and device tree files:
 
 - **Nix with flakes support**
 - **QEMU with ARM64 support** (provided by flake)
-- **NixOS SD image** built for Raspberry Pi 4
+- **NixOS SD image** built for Raspberry Pi (Pi 3B+ or Pi 4)
 
 ## Troubleshooting
 
