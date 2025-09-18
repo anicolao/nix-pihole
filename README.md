@@ -1,10 +1,14 @@
 # NixOS Pi-hole Configuration
 
-A NixOS configuration for setting up a Pi-hole DNS sinkhole on Raspberry Pi devices (Pi 3B+ and Pi 4), providing network-wide ad blocking and DNS filtering.
+A NixOS configuration for setting up a Pi-hole DNS sinkhole on Raspberry Pi
+devices (Pi 3B+ and Pi 4), providing network-wide ad blocking and DNS filtering.
 
 ## Overview
 
-This repository contains a complete NixOS configuration that transforms a Raspberry Pi (3B+ or 4) into a dedicated Pi-hole server. Pi-hole acts as a DNS sinkhole, blocking advertisements and tracking domains at the network level, providing faster browsing and enhanced privacy for all devices on your network.
+This repository contains a complete NixOS configuration that transforms a
+Raspberry Pi (3B+ or 4) into a dedicated Pi-hole server. Pi-hole acts as a DNS
+sinkhole, blocking advertisements and tracking domains at the network level,
+providing faster browsing and enhanced privacy for all devices on your network.
 
 ## Features
 
@@ -26,13 +30,12 @@ This repository contains a complete NixOS configuration that transforms a Raspbe
 ├── modules/            # Modular configuration components
 │   ├── base-system.nix # Basic system settings (boot, locale, packages)
 │   ├── pihole.nix      # Pi-hole specific configuration
-│   ├── networking.nix  # Network and firewall settings  
+│   ├── networking.nix  # Network and firewall settings
 │   ├── hardware.nix    # Hardware-specific settings
 │   └── users.nix       # User management module
 ├── templates/          # Configuration templates for customization
 │   ├── secrets.nix.example  # WiFi credentials and SSH keys template
 │   ├── users.nix.example    # User accounts template
-│   └── wifi.nix.example     # WiFi configuration template
 ├── personal/           # Personal configurations (gitignored)
 │   └── README.md       # Instructions for personal configuration
 └── flake.lock          # Dependency lock file
@@ -56,17 +59,19 @@ git clone https://github.com/anicolao/nix-pihole.git
 cd nix-pihole
 
 # Copy templates to create your personal configuration
+mkdir -p personal
 cp templates/secrets.nix.example personal/secrets.nix
-cp templates/users.nix.example personal/alex_users.nix
+cp templates/users.nix.example personal/users.nix
 
 # Edit the secrets file with your actual values
-nano personal/secrets.nix  # Add your WiFi credentials and SSH keys
+vi personal/secrets.nix  # Add your WiFi credentials and SSH keys
 
 # Optionally customize your user configuration
-nano personal/alex_users.nix  # Modify usernames and settings as needed
+vi personal/users.nix  # Modify usernames and settings as needed
 ```
 
 **Important**: Edit `personal/secrets.nix` to include:
+
 - Your WiFi network name and password
 - Your SSH public key for secure access
 - A hashed password for the root user
@@ -75,19 +80,11 @@ nano personal/alex_users.nix  # Modify usernames and settings as needed
 
 To create a bootable SD card image for your Raspberry Pi:
 
-#### For Raspberry Pi 4:
+#### For Raspberry Pi 4 or 3B+:
+
 ```bash
 # Build the SD card image
-nix build path:$PWD#images.rpi4
-
-# Flash the image to your SD card
-sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
-```
-
-#### For Raspberry Pi 3B+:
-```bash
-# Build the SD card image
-nix build path:$PWD#images.rpi3bplus
+nix build path:$PWD#images.pihole
 
 # Flash the image to your SD card
 sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
@@ -104,14 +101,17 @@ sudo dd if=result/sd-image/*.img of=/dev/sdX bs=4M status=progress
 ### 4. Pi-hole Configuration
 
 After boot, Pi-hole will be available at:
+
 - **Web Interface**: `http://<pi-ip-address>:8080/admin`
-- **DNS Server**: Configure your router to use `<pi-ip-address>` as the primary DNS
+- **DNS Server**: Configure your router to use `<pi-ip-address>` as the primary
+  DNS
 
 ## Configuration Details
 
 ### DNS Settings
 
 The Pi-hole is configured with:
+
 - **Upstream DNS**: Google DNS (8.8.8.8)
 - **Interface Binding**: Binds to `end0` interface
 - **Blocklists**: Steven Black's unified hosts file for ad blocking
@@ -132,7 +132,8 @@ The Pi-hole is configured with:
 
 ### Module-Based Configuration
 
-The configuration is now organized into modules that can be customized through options in `configuration.nix`:
+The configuration is now organized into modules that can be customized through
+options in `configuration.nix`:
 
 ```nix
 pihole = {
@@ -143,7 +144,7 @@ pihole = {
     upstreamDNS = ["8.8.8.8"];   # DNS servers
     webPort = "8080";             # Web interface port
   };
-  
+
   # Networking options
   networking = {
     enable = true;
@@ -151,7 +152,7 @@ pihole = {
     wifi.enable = true;           # Set to false for ethernet-only
     firewall.allowedTCPPorts = [22 80 443 8080];
   };
-  
+
   # Base system options
   baseSystem = {
     enable = true;
@@ -163,9 +164,11 @@ pihole = {
 
 ### Personal Configuration
 
-Personal settings like users and WiFi credentials are stored in the `personal/` directory:
+Personal settings like users and WiFi credentials are stored in the `personal/`
+directory:
 
 1. **WiFi and Secrets**: Edit `personal/secrets.nix`
+
    ```nix
    {
      wifi = {
@@ -176,13 +179,15 @@ Personal settings like users and WiFi credentials are stored in the `personal/` 
    }
    ```
 
-2. **User Accounts**: Edit `personal/alex_users.nix` or copy from `templates/users.nix.example`
+2. **User Accounts**: Edit `personal/users.nix` or copy from
+   `templates/users.nix.example`
 
 ### Advanced Customization
 
 #### Adding Custom Blocklists
 
-Edit the Pi-hole lists in `modules/pihole.nix` or override in `configuration.nix`:
+Edit the Pi-hole lists in `modules/pihole.nix` or override in
+`configuration.nix`:
 
 ```nix
 services.pihole-ftl.lists = [
@@ -217,15 +222,11 @@ pihole.service.interface = "eth0";  # For Raspberry Pi ethernet
 # Check flake configuration
 nix flake check
 
-# Build the system configuration for Pi 4
-nix build .#nixosConfigurations.rpi4.config.system.build.toplevel
+# Build the system configuration
+nix build .#nixosConfigurations.pihole.config.system.build.toplevel
 
-# Build the system configuration for Pi 3B+
-nix build .#nixosConfigurations.rpi3bplus.config.system.build.toplevel
-
-# Build SD images
-nix build path:$PWD#images.rpi4      # For Pi 4
-nix build path:$PWD#images.rpi3bplus # For Pi 3B+
+# Build SD image
+nix build path:$PWD#images.pihole
 ```
 
 ### Updating Dependencies
@@ -235,17 +236,19 @@ nix build path:$PWD#images.rpi3bplus # For Pi 3B+
 nix flake update
 
 # Rebuild with new dependencies
-nix build path:$PWD#images.rpi4      # For Pi 4
-nix build path:$PWD#images.rpi3bplus # For Pi 3B+
+nix build path:$PWD#images.pihole
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **WiFi not connecting**: Verify network name and password in `configuration.nix`
-2. **Pi-hole web interface not accessible**: Check firewall settings and port 8080
-3. **DNS not resolving**: Ensure Pi-hole service is running and ports 53 are open
+1. **WiFi not connecting**: Verify network name and password in
+   `configuration.nix`
+2. **Pi-hole web interface not accessible**: Check firewall settings and port
+   8080
+3. **DNS not resolving**: Ensure Pi-hole service is running and ports 53 are
+   open
 4. **SSH connection refused**: Verify SSH service is enabled and port 22 is open
 
 ### Logs and Diagnostics
@@ -281,7 +284,8 @@ nslookup google.com localhost
 
 ## License
 
-This configuration is provided as-is for educational and personal use. Please review and customize according to your specific needs and security requirements.
+This configuration is provided as-is for educational and personal use. Please
+review and customize according to your specific needs and security requirements.
 
 ## Related Resources
 

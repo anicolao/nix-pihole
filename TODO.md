@@ -9,19 +9,18 @@ nix-pihole repository to make it more maintainable, secure, and reusable.
 
 - [x] **Separate Personal Configuration from System Configuration**
 
-  - Issue: `alex_users.nix` contains personal user account and SSH keys
+  - Issue: `users.nix` contains personal user account and SSH keys
   - Solution: Create a generic `users.nix` template and move personal config to
     `personal/` directory
   - Files to create:
     - `modules/users.nix` (generic user management)
-    - `personal/alex_users.nix` (personal configuration)
+    - `personal/users.nix` (personal configuration)
     - `personal/secrets.nix` (personal secrets - gitignored)
 
 - [x] **Create a Configuration Template System**
 
   - Create `template/` directory with:
     - `template/users.nix.example`
-    - `template/wifi.nix.example`
     - `template/secrets.nix.example`
   - Add instructions for copying and customizing templates
 
@@ -96,7 +95,6 @@ nix-pihole repository to make it more maintainable, secure, and reusable.
 - [ ] **Create Configuration Examples**
 
   - `examples/ethernet-only.nix`
-  - `examples/multiple-wifi-networks.nix`
   - `examples/dhcp-enabled.nix`
   - `examples/custom-blocklists.nix`
 
@@ -145,11 +143,9 @@ nix-pihole/
 │   └── users.nix
 ├── examples/
 │   ├── ethernet-only.nix
-│   ├── multiple-wifi.nix
 │   └── custom-blocklists.nix
 ├── templates/
 │   ├── personal-config.nix.example
-│   ├── wifi-config.nix.example
 │   └── secrets.nix.example
 ├── scripts/
 │   ├── build-image.sh
@@ -157,7 +153,6 @@ nix-pihole/
 │   └── setup-secrets.sh
 └── personal/          # gitignored directory
     ├── users.nix
-    ├── wifi.nix
     └── secrets.nix
 ```
 
