@@ -1,40 +1,42 @@
 #!/bin/bash
 set -e # Exit immediately if a command fails
 
-# --- Configuration for Raspberry Pi 4 ---
-MACHINE_TYPE="raspi4b"
+# --- Default Configuration ---
+MACHINE_TYPE=""
 CPU_TYPE="cortex-a72"
-DTB_FILE="bcm2711-rpi-4-b.dtb" # Device Tree Blob for Pi 4 Model B
-KERNEL_FILE="u-boot-rpi4.bin"  # U-Boot binary for Raspberry Pi 4
-SSH_FORWARD_PORT="5022"        # Host port to forward to the VM's SSH port 22
+DTB_FILE=""
+KERNEL_FILE="u-boot-rpi4.bin"
+SSH_FORWARD_PORT="5022"
+MODEL=""
 
 # --- Helper functions ---
 show_help() {
 	cat <<EOF
-Usage: $0 [OPTIONS] /path/to/raspberry-pi.img
+Usage: $0 < --pi3 | --pi4 > [OPTIONS] /path/to/raspberry-pi.img
 
-Launch a Raspberry Pi 4 emulator using QEMU.
+Launch a Raspberry Pi emulator using QEMU.
+
+REQUIRED:
+    --pi3           Use Raspberry Pi 3 emulation (recommended, stable)
+    --pi4           Use Raspberry Pi 4 emulation (experimental, may be unstable)
 
 OPTIONS:
     --help          Show this help message
-    --pi3           Use Pi 3 fallback configuration for better stability
     --port PORT     Use custom SSH forward port (default: 5022)
     --dry-run       Show the QEMU command that would be executed without running it
 
 EXAMPLES:
-    $0 raspios-lite.img
-    $0 --pi3 raspios-lite.img
-    $0 --port 2222 raspios-lite.img
-    $0 --dry-run raspios-lite.img
+    $0 --pi3 nixos-pi-image.img
+    $0 --pi4 --port 2222 nixos-pi-image.img
 
 The script will:
-1. Extract device tree files and use u-boot for booting
-2. Launch QEMU with Raspberry Pi 4 emulation
-3. Forward SSH from localhost:PORT to the VM
-4. Clean up temporary files when done
+1. Extract device tree files from the specified image
+2. Launch QEMU with the selected Raspberry Pi emulation
+3. Forward SSH from localhost:PORT to the VM's port 22
+4. Clean up temporary files upon exit
 
 To connect via SSH once the VM is running:
-    ssh pi@localhost -p $SSH_FORWARD_PORT
+    ssh <user>@localhost -p $SSH_FORWARD_PORT
 
 To exit the VM, press Ctrl-A then X.
 EOF
@@ -104,7 +106,12 @@ unmount_image_macos() {
 
 # --- Parse command line arguments ---
 DRY_RUN=false
-USE_PI3=false
+DISK_IMAGE=""
+
+if [[ $# -eq 0 ]]; then
+	show_help
+	exit 1
+fi
 
 while [[ $# -gt 0 ]]; do
 	case $1 in
@@ -113,7 +120,24 @@ while [[ $# -gt 0 ]]; do
 		exit 0
 		;;
 	--pi3)
-		USE_PI3=true
+		if [[ -n "$MACHINE_TYPE" ]]; then
+			echo "Error: --pi3 and --pi4 are mutually exclusive." >&2
+			exit 1
+		fi
+		MACHINE_TYPE="raspi3b"
+		DTB_FILE="bcm2710-rpi-3-b-plus.dtb"
+		MODEL="Pi 3"
+		shift
+		;;
+	--pi4)
+		if [[ -n "$MACHINE_TYPE" ]]; then
+			echo "Error: --pi3 and --pi4 are mutually exclusive." >&2
+			exit 1
+		fi
+		echo "⚠️  Warning: Raspberry Pi 4 emulation is experimental and may be unstable." >&2
+		MACHINE_TYPE="raspi4b"
+		DTB_FILE="bcm2711-rpi-4-b.dtb"
+		MODEL="Pi 4"
 		shift
 		;;
 	--port)
@@ -126,34 +150,38 @@ while [[ $# -gt 0 ]]; do
 		;;
 	-*)
 		echo "Unknown option: $1" >&2
-		echo "Use --help for usage information." >&2
+		show_help >&2
 		exit 1
 		;;
 	*)
-		DISK_IMAGE="$1"
+		if [[ -z "$DISK_IMAGE" ]]; then
+			DISK_IMAGE="$1"
+		else
+			echo "Error: Unexpected argument '$1'" >&2
+			show_help >&2
+			exit 1
+		fi
 		shift
 		;;
 	esac
 done
 
 # --- Validate arguments ---
+if [[ -z "$MACHINE_TYPE" ]]; then
+	echo "Error: You must specify --pi3 or --pi4." >&2
+	show_help >&2
+	exit 1
+fi
+
 if [[ -z "$DISK_IMAGE" ]]; then
-	echo "Error: No disk image specified" >&2
-	echo "Usage: $0 [OPTIONS] /path/to/raspberry-pi.img" >&2
-	echo "Use --help for more information." >&2
+	echo "Error: No disk image specified." >&2
+	show_help >&2
 	exit 1
 fi
 
 if [[ ! -f "$DISK_IMAGE" ]]; then
 	echo "❌ Disk image not found: $DISK_IMAGE" >&2
 	exit 1
-fi
-
-# --- Apply Pi 3 fallback configuration if requested ---
-if [[ "$USE_PI3" == "true" ]]; then
-	echo "🔄 Using Raspberry Pi 3 fallback configuration..." >&2
-	MACHINE_TYPE="raspi3b"
-	DTB_FILE="bcm2710-rpi-3-b-plus.dtb"
 fi
 
 # --- Script Logic ---
@@ -221,14 +249,13 @@ else
 	BOOT_MOUNT=""
 fi
 
-RAM_SIZE=2G
-if [[ "$USE_PI3" == "true" ]]; then
-	RAM_SIZE=1G
-	MODEL="Pi 3"
+if [[ "$MACHINE_TYPE" == "raspi3b" ]]; then
+	RAM_SIZE="1G"
 else
-	MODEL="Pi 4"
+	RAM_SIZE="2G" # Pi 4 gets more RAM
 fi
-echo "🚀 Launching QEMU ${MODEL}..." >&2
+
+echo "🚀 Launching QEMU ($MODEL)..." >&2
 echo "   Connect via SSH: ssh pi@localhost -p $SSH_FORWARD_PORT" >&2
 echo "   To exit, press Ctrl-A then X." >&2
 echo "" >&2

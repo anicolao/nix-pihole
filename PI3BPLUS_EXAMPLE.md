@@ -4,32 +4,53 @@ This document demonstrates building and emulating Pi 3B+ images with the newly a
 
 ## Quick Start
 
-### 1. Build Pi 3B+ Image
+### 1. Build the Pi 3B+ Image
+First, build the SD card image using Nix.
 ```bash
 # Build the Pi 3B+ image
 nix build .#images.rpi3bplus
 
-# The built image will be in result/sd-image/
+# The built image will be available in result/sd-image/
 ls result/sd-image/nixos-sd-image-*.img
 ```
 
-### 2. Test with Emulation
-```bash
-# Option A: Using emu/ with Pi 3 fallback
-cd emu/
-nix develop
-./launch-pi.sh --pi3 ../result/sd-image/nixos-sd-image-*.img
+### 2. Prepare and Resize the Image for Emulation
+The raw image produced by the build is small. For emulation, it's better to resize it to a more realistic size, like 8GB.
 
-# Option B: Using emu2/ with direct boot
-cd emu2/
-nix develop  
-./launch-direct.sh ../result/sd-image/nixos-sd-image-*.img
+**Note**: The `images/` directory is git-ignored to store large image files.
+
+```bash
+# Create a directory to store the resized image
+mkdir -p images
+
+# Identify the source image path
+SOURCE_IMAGE=$(ls result/sd-image/nixos-sd-image-*.img | head -n 1)
+
+# Resize the image to 8GB using qemu-img
+qemu-img resize -f raw "$SOURCE_IMAGE" 8G
+
+# Move the resized image to the images/ directory
+mv "$SOURCE_IMAGE" images/nixos-pi3-8g.img
 ```
 
-### 3. Flash to Real Hardware
+### 3. Test with Emulation
+Now, launch the resized image using the QEMU emulation script. You must specify `--pi3` for Pi 3 emulation.
+
 ```bash
-# Flash to SD card for real Pi 3B+ hardware
-sudo dd if=result/sd-image/nixos-sd-image-*.img of=/dev/sdX bs=4M status=progress
+# Navigate to the emulation directory and enter the Nix shell
+cd emu/
+nix develop
+
+# Launch the resized image
+./launch-pi.sh --pi3 ../images/nixos-pi3-8g.img
+```
+
+### 4. Flash to Real Hardware
+When flashing to a physical SD card, use the **original** (non-resized) image from the `result/` directory.
+
+```bash
+# Flash the original image to an SD card
+sudo dd if=$(ls result/sd-image/nixos-sd-image-*.img | head -n 1) of=/dev/sdX bs=4M status=progress
 ```
 
 ## Build Commands Summary

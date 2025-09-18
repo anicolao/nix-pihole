@@ -1,12 +1,18 @@
+# Nix build results
 result
+result-*
 
-# Emulation temporary files
-emu2/test-*.img
-emu2/*.log
-emu2/.direnv/
+# Resized VM images
+images/
 
-# Secrets file containing sensitive configuration
+# Personal configuration files
+personal/
 secrets.nix
 
-# Personal configuration directory (contains sensitive information)
-personal/
+# Emulation temporary files
+emu/*.log
+
+# OS-specific files
+.DS_Store
+*.swp
+*~
