@@ -1,0 +1,26 @@
+
+/boot/extlinux/../nixos/s7aycrp6wr3pziij59av21lvzwmdi925-linux-6.12.41-Image
+
+setenv bootdev mmc 1
+setenv bootpart_root_num 2
+
+# NixOS-specific paths and memory addresses from your original boot log:
+setenv kernel_path "/boot/extlinux/../nixos/s7aycrp6wr3pziij59av21lvzwmdi925-linux-6.12.41-Image"
+setenv initrd_path "/boot/extlinux/../nixos/fzx3ark4li3sdhwhsfx2vhcyws70kbrl-initrd-linux-6.12.41-initrd"
+setenv dtb_path "/nix/store/s7aycrp6wr3pziij59av21lvzwmdi925-linux-6.12.41/dtbs/broadcom/bcm2711-rpi-4-b.dtb"
+setenv nixos_init_path "/nix/store/zv71d6jmscnw2a4gsg1miqgv83ncnwn1-nixos-system-pihole-sd-card-25.11.20250804.cab7782/init"
+
+# 1. Load the Kernel Image from the root filesystem (ext4 partition)
+ext4load ${bootdev}:${bootpart_root_num} 0x800000 ${kernel_path}
+
+# 2. Load the Initial RAM Disk (initrd) from the root filesystem (ext4 partition)
+ext4load ${bootdev}:${bootpart_root_num} 0x1f4db000 ${initrd_path}
+
+# 3. Load the Device Tree Blob (DTB) from the root filesystem (ext4 partition)
+ext4load ${bootdev}:${bootpart_root_num} 0x1f4ce000 ${dtb_path}
+
+# 4. Set the Kernel Command Line Arguments
+setenv bootargs "init=${nixos_init_path} console=ttyS0,115200 loglevel=7 root=/dev/mmcblk0p2 rootwait rw"
+
+# 5. Boot the Kernel using booti
+booti 0x800000 0x1f4db000 0x1f4ce000

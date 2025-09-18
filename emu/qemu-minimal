@@ -1,0 +1,8 @@
+qemu-system-aarch64 \
+    -M raspi4b \
+    -cpu cortex-a72 -m 2G -smp 4 \
+    -dtb /Users/anicolao/projects/nixos/rp4/nix-pihole/emu/bcm2711-rpi-4-b.dtb \
+    -drive if=sd,format=raw,file=../../images/minimal.img \
+    -netdev user,id=net0,hostfwd=tcp::5022-:22 \
+    -device usb-net,netdev=net0 \
+    -nographic

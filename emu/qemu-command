@@ -1,0 +1,11 @@
+qemu-system-aarch64 \
+  -M raspi4b \
+  -cpu cortex-a72 \
+  -m 2G -smp 4 \
+  -dtb /Users/anicolao/projects/nixos/rp4/nix-pihole/emu/bcm2711-rpi-4-b.dtb \
+  -kernel /nix/store/s7aycrp6wr3pziij59av21lvzwmdi925-linux-6.12.41/Image \
+  -append 'rw earlyprintk loglevel=8 console=ttyS0,115200 dwc_otg.lpm_enable=0 root=/dev/mmcblk0p2 rootdelay=1' \
+    -drive if=sd,format=raw,file=../../images/minimal.img \
+    -netdev user,id=net0,hostfwd=tcp::5022-:22 \
+    -device usb-net,netdev=net0 \
+    -nographic
