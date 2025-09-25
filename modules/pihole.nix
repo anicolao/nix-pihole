@@ -13,8 +13,14 @@ with lib; {
 
       interface = mkOption {
         type = types.str;
-        default = "eth0";
-        description = "Network interface for Pi-hole to bind to";
+        default = "usb0"; # Default to emulator interface for broader compatibility
+        description = ''
+          Network interface for Pi-hole to bind to.
+          Common values:
+          - "usb0": QEMU emulator (default)
+          - "eth0": Real Raspberry Pi hardware  
+          - "wlan0": WiFi interface
+        '';
       };
 
       upstreamDNS = mkOption {

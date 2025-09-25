@@ -24,6 +24,7 @@
 
   # Module-specific customizations can be done here
   # For example:
-  # pihole.service.interface = "eth0";  # Override default interface
+  # pihole.service.interface = "eth0";  # For real Raspberry Pi hardware
+  # pihole.service.interface = "usb0";  # For QEMU emulator (default)
   # pihole.baseSystem.timeZone = "UTC";  # Override default timezone
 }

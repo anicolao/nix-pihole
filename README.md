@@ -208,11 +208,23 @@ pihole.networking.wifi.enable = false;
 
 #### Different Hardware Platforms
 
-Change the network interface for different hardware:
+The Pi-hole configuration automatically handles the difference between emulator and real hardware networking:
 
 ```nix
-pihole.service.interface = "eth0";  # For Raspberry Pi ethernet
+# For QEMU emulator (default - uses USB networking)  
+pihole.service.interface = "usb0";  # Default
+
+# For real Raspberry Pi hardware
+pihole.service.interface = "eth0";  # Ethernet
+
+# For WiFi-only setup
+pihole.service.interface = "wlan0"; # WiFi
 ```
+
+**Emulator vs Hardware Interface Names:**
+- **QEMU Emulator**: Uses `usb0` (USB network device)
+- **Real Pi 4**: Uses `eth0` (Ethernet) or `wlan0` (WiFi)
+- **Configuration**: The default is `usb0` for emulator compatibility. Override in `configuration.nix` for real hardware.
 
 ## Building and Testing
 
@@ -250,6 +262,7 @@ nix build path:$PWD#images.pihole
 3. **DNS not resolving**: Ensure Pi-hole service is running and ports 53 are
    open
 4. **SSH connection refused**: Verify SSH service is enabled and port 22 is open
+5. **Pi-hole fails in emulator**: The default interface is `usb0` for emulator compatibility. For real hardware, set `pihole.service.interface = "eth0"` in `configuration.nix`
 
 ### Logs and Diagnostics
 
@@ -259,6 +272,9 @@ systemctl status pihole-ftl
 
 # View Pi-hole logs
 journalctl -u pihole-ftl -f
+
+# Check available network interfaces
+ip link show
 
 # Check network connectivity
 ping 8.8.8.8
