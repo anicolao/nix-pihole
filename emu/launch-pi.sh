@@ -271,10 +271,11 @@ QEMU_CMD=(
 	-kernel "$WORKDIR/$KERNEL_FILE"
 	-drive "if=sd,format=raw,file=$DISK_IMAGE"
 	-append "rw earlyprintk loglevel=8 console=ttyAMA0,115200 dwc_otg.lpm_enable=0 root=/dev/mmcblk0p2 rootdelay=1"
-	-netdev "user,id=net0,hostfwd=tcp::$SSH_FORWARD_PORT-:22"
 	-device "usb-net,netdev=net0"
+	-netdev "user,id=net0,hostfwd=tcp::$SSH_FORWARD_PORT-:22"
 	-nographic
 )
+#-netdev "tap,id=net0,ifname=tap0,script=no,downscript=no"
 
 if [[ "$DRY_RUN" == "true" ]]; then
 	echo "Dry run - would execute:" >&2
