@@ -24,11 +24,6 @@ committed to version control.
    - `wifi.password`: Your WiFi password
    - `sshKeys.users`: Your SSH public key(s)
 
-4. **Verify your configuration:**
-   ```bash
-   python3 verify-secrets.py
-   ```
-
 ## Generating SSH Keys
 
 If you don't have SSH keys yet:
@@ -55,7 +50,7 @@ cat ~/.ssh/id_ed25519.pub
 This change removes the following hardcoded values:
 
 - WiFi password `"****"` for network `"SnoopyNet"`
-- SSH public keys embedded in `alex_users.nix`
+- SSH public keys embedded in `users.nix`
 
 These values now come from the `secrets.nix` file, making the configuration more
 secure and reusable.

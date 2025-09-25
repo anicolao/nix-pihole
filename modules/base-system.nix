@@ -1,27 +1,28 @@
 # Base system configuration module
 # Contains fundamental system settings like boot, locale, services, and packages
-
-{ config, lib, pkgs, ... }:
-
-with lib;
-
 {
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; {
   options = {
     pihole.baseSystem = {
       enable = mkEnableOption "base system configuration";
-      
+
       timeZone = mkOption {
         type = types.str;
         default = "America/Toronto";
         description = "System timezone";
       };
-      
+
       locale = mkOption {
         type = types.str;
         default = "en_US.UTF-8";
         description = "System locale";
       };
-      
+
       packages = {
         essential = mkOption {
           type = types.listOf types.package;
@@ -33,7 +34,7 @@ with lib;
           ];
           description = "Essential system packages";
         };
-        
+
         development = mkOption {
           type = types.listOf types.package;
           default = with pkgs; [
@@ -46,7 +47,7 @@ with lib;
           ];
           description = "Development packages";
         };
-        
+
         utilities = mkOption {
           type = types.listOf types.package;
           default = with pkgs; [
@@ -64,18 +65,18 @@ with lib;
   config = mkIf config.pihole.baseSystem.enable {
     # Allow unfree packages
     nixpkgs.config.allowUnfree = true;
-    
+
     # System locale and timezone
     time.timeZone = config.pihole.baseSystem.timeZone;
     i18n.defaultLocale = config.pihole.baseSystem.locale;
 
     # Boot configuration for ARM devices
     boot = {
-      kernelParams = ["console=tty1" "console=ttyS0,115200"];
+      kernelParams = ["console=tty1" "console=ttyS0,115200" "net.ifnames=0"];
       loader.grub.enable = false;
       loader.generic-extlinux-compatible.enable = true;
     };
-    
+
     # Serial console support
     systemd.services."serial-getty@ttyS0" = {
       enable = true;
@@ -90,15 +91,15 @@ with lib;
       };
       ntp.enable = true;
     };
-    
+
     # Enable zsh globally
     programs.zsh.enable = true;
 
     # System packages
-    environment.systemPackages = 
-      config.pihole.baseSystem.packages.essential ++
-      config.pihole.baseSystem.packages.development ++
-      config.pihole.baseSystem.packages.utilities;
+    environment.systemPackages =
+      config.pihole.baseSystem.packages.essential
+      ++ config.pihole.baseSystem.packages.development
+      ++ config.pihole.baseSystem.packages.utilities;
 
     # Nix configuration
     nix = {
@@ -115,3 +116,4 @@ with lib;
     };
   };
 }
+
